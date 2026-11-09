@@ -6,6 +6,10 @@
   const CLOUD_CONFIG_KEY = "call-time-cloud-config-v1";
   const CLOUD_SESSION_KEY = "call-time-cloud-session-v1";
   const CLOUD_TOMBSTONES_KEY = "call-time-cloud-tombstones-v1";
+  const DEFAULT_CLOUD_CONFIG = {
+    url: "https://uuccjydofzhieyuigyvo.supabase.co",
+    anonKey: "sb_publishable_bI9DDR00BWbJHMrdaLMiUw_ZDujl4pR"
+  };
   const WORK_DIRECTORY_SCOPE = "User.ReadBasic.All";
   const today = toDateInput(new Date());
   let storageFault = false;
@@ -89,7 +93,7 @@
     } catch (error) {
       console.error("Could not read the cloud storage configuration.", error);
     }
-    return null;
+    return DEFAULT_CLOUD_CONFIG;
   }
 
   function loadCloudSession() {
