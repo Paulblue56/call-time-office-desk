@@ -27,7 +27,13 @@
         </nav>
         <div class="sidebar-bottom">
           <div class="local-note"><span class="status-dot"></span><span><strong>Saved on this device</strong><small>Your entries stay in this browser</small></span></div>
+          <div class="cloud-note"><span class="status-dot cloud-status-dot"></span><span><strong id="cloud-status">Device only</strong><small id="cloud-detail">Set up a free server account</small></span></div>
+          <button class="nav-item" id="cloud-connect" type="button" data-action="cloud-connect"><span class="nav-icon">☁</span>Connect cloud storage</button>
+          <button class="nav-item cloud-signout" id="cloud-signout" type="button" data-action="cloud-signout" hidden><span class="nav-icon">↪</span>Sign out of cloud</button>
           <button class="nav-item" type="button" data-action="backup"><span class="nav-icon">⇩</span>Export backup</button>
+          <button class="nav-item" type="button" data-action="merge-backup"><span class="nav-icon">⇧</span>Merge backup</button>
+          <label class="sr-only" for="merge-file">Choose a Call & Time backup to merge</label>
+          <input id="merge-file" type="file" accept="application/json,.json" hidden>
           <label class="nav-item file-label"><span class="nav-icon">⇧</span>Restore backup<input id="restore-file" type="file" accept="application/json,.json" hidden></label>
           <small class="version-note">Call & Time · Local edition</small>
         </div>

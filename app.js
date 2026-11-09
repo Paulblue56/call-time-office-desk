@@ -3,12 +3,16 @@
 
   const STORAGE_KEY = "call-time-office-desk-v1";
   const WORK_ACCOUNT_KEY = "call-time-work-directory-settings-v1";
+  const CLOUD_CONFIG_KEY = "call-time-cloud-config-v1";
+  const CLOUD_SESSION_KEY = "call-time-cloud-session-v1";
+  const CLOUD_TOMBSTONES_KEY = "call-time-cloud-tombstones-v1";
   const WORK_DIRECTORY_SCOPE = "User.ReadBasic.All";
   const today = toDateInput(new Date());
   let storageFault = false;
   let msalClientPromise;
   const state = {
     view: "overview",
+    overviewDay: today,
     callFilter: "all",
     callSearch: "",
     directorySearch: "",
@@ -21,6 +25,13 @@
     meetingImportStatus: "",
     data: loadData()
   };
+  let localDataSnapshot = JSON.stringify(state.data);
+  let cloudConfig = loadCloudConfig();
+  let cloudSession = loadCloudSession();
+  let cloudSyncStatus = cloudSession ? "Checking cloud storage…" : "Device only";
+  let cloudSyncTimer;
+  let cloudSyncPromise;
+  let cloudTombstones = loadCloudTombstones();
 
   const content = document.querySelector("#content");
   const modalRoot = document.querySelector("#modal-root");
@@ -71,20 +82,102 @@
 
   const workAccountSettings = loadWorkAccountSettings();
 
-  function saveData(allowRecovery = false) {
-    if (storageFault && !allowRecovery) {
-      toast("Saved data could not be read, so changes were not saved. Restore a valid backup to continue.");
+  function loadCloudConfig() {
+    try {
+      const config = JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY) || "null");
+      if (config && typeof config.url === "string" && typeof config.anonKey === "string") return config;
+    } catch (error) {
+      console.error("Could not read the cloud storage configuration.", error);
+    }
+    return null;
+  }
+
+  function loadCloudSession() {
+    try {
+      const session = JSON.parse(localStorage.getItem(CLOUD_SESSION_KEY) || "null");
+      if (session && typeof session.access_token === "string" && session.user?.id) return session;
+    } catch (error) {
+      console.error("Could not read the cloud storage session.", error);
+    }
+    return null;
+  }
+
+  function loadCloudTombstones() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLOUD_TOMBSTONES_KEY) || "[]");
+      if (Array.isArray(saved) && saved.every((item) => typeof item === "string" ||
+        (item && Array.isArray(item.keys) && item.keys.every((key) => typeof key === "string") &&
+          item.keys.length > 0 && typeof item.deletedAt === "string" && Number.isFinite(Date.parse(item.deletedAt))))) {
+        return saved.map((item) => typeof item === "string"
+          ? { keys: [item], deletedAt: "1970-01-01T00:00:00.000Z" }
+          : item);
+      }
+      throw new Error("Saved deletion markers are invalid.");
+    } catch (error) {
+      console.error("Could not read cloud deletion markers.", error);
+      return [];
+    }
+  }
+
+  function persistCloudTombstones() {
+    try {
+      localStorage.setItem(CLOUD_TOMBSTONES_KEY, JSON.stringify(cloudTombstones));
+    } catch (error) {
+      console.error("Could not save cloud deletion markers.", error);
+      toast("Could not save a cloud deletion marker on this device.");
       return false;
     }
+    return true;
+  }
+
+  function persistLocalData() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+      localDataSnapshot = JSON.stringify(state.data);
+      return true;
     } catch (error) {
       console.error("Could not save Call & Time data.", error);
       toast("Could not save data. Check browser storage space.");
       return false;
     }
+  }
+
+  function saveData(allowRecovery = false) {
+    if (storageFault && !allowRecovery) {
+      toast("Saved data could not be read, so changes were not saved. Restore a valid backup to continue.");
+      return false;
+    }
+    stampLocalDataChanges();
+    if (!persistLocalData()) return false;
     if (allowRecovery) storageFault = false;
+    clearCloudTombstonesForCurrentRecords();
+    persistCloudTombstones();
+    scheduleCloudSync();
     return true;
+  }
+
+  function stampLocalDataChanges() {
+    let previous;
+    try {
+      previous = JSON.parse(localDataSnapshot);
+    } catch (error) {
+      console.error("Could not compare the previous local data snapshot.", error);
+      previous = { calls: [], attendance: [], meetings: [], clients: [], staff: [] };
+    }
+    const changedAt = new Date().toISOString();
+    for (const collection of ["calls", "attendance", "meetings", "clients", "staff"]) {
+      const before = new Map((previous[collection] || []).map((record) => [record.id, record]));
+      for (const record of state.data[collection]) {
+        const oldRecord = before.get(record.id);
+        const oldValue = oldRecord ? { ...oldRecord } : null;
+        const newValue = { ...record };
+        if (oldValue) {
+          delete oldValue.updatedAt;
+          delete newValue.updatedAt;
+        }
+        if (!oldRecord || JSON.stringify(oldValue) !== JSON.stringify(newValue)) record.updatedAt = changedAt;
+      }
+    }
   }
 
   function id() {
@@ -180,6 +273,286 @@
     return `<div class="empty-state"><strong>${escapeHtml(title)}</strong>${escapeHtml(message)}</div>`;
   }
 
+  function normalizedText(value) {
+    return String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  }
+
+  function stableRecordKey(collection, record) {
+    if (collection === "clients" || collection === "staff") return normalizedText(record.name);
+    if (collection === "meetings" && record.externalUid) return `${record.externalUid}|${record.recurrenceId || ""}`;
+    return Object.keys(record).filter((key) => key !== "id" && key !== "updatedAt").sort()
+      .map((key) => `${key}:${String(record[key] ?? "")}`).join("|");
+  }
+
+  function recordTombstoneKeys(collection, record) {
+    return [
+      record.id ? `${collection}:id:${record.id}` : "",
+      `${collection}:key:${stableRecordKey(collection, record)}`
+    ].filter(Boolean);
+  }
+
+  function mergeTombstoneLists(...lists) {
+    const tombstones = new Map();
+    lists.flat().forEach((item) => {
+      if (!item || !Array.isArray(item.keys) || !item.keys.length) return;
+      const key = [...item.keys].sort().join("|");
+      const existing = tombstones.get(key);
+      if (!existing || Date.parse(item.deletedAt) > Date.parse(existing.deletedAt)) tombstones.set(key, item);
+    });
+    return [...tombstones.values()];
+  }
+
+  function clearCloudTombstonesForCurrentRecords() {
+    const activeRecords = Object.entries(state.data).flatMap(([collection, records]) =>
+      records.map((record) => ({ keys: recordTombstoneKeys(collection, record), updatedAt: Date.parse(record.updatedAt) || 0 })));
+    cloudTombstones = cloudTombstones.filter((tombstone) =>
+      !activeRecords.some((record) => record.updatedAt > (Date.parse(tombstone.deletedAt) || 0) &&
+        record.keys.some((key) => tombstone.keys.includes(key))));
+  }
+
+  function recordTimestamp(record) {
+    return Date.parse(record.updatedAt || "") || 0;
+  }
+
+  function mergeDataCollections(preferred, secondary) {
+    const collections = ["calls", "attendance", "meetings", "clients", "staff"];
+    const merged = {};
+    for (const collection of collections) {
+      const records = [];
+      for (const incoming of [...(preferred[collection] || []), ...(secondary[collection] || [])]) {
+        if (!incoming || typeof incoming !== "object") continue;
+        const key = stableRecordKey(collection, incoming);
+        const index = records.findIndex((record) =>
+          (incoming.id && record.id === incoming.id) || stableRecordKey(collection, record) === key);
+        if (index < 0) {
+          records.push({ ...incoming });
+          continue;
+        }
+        const existing = records[index];
+        const winner = recordTimestamp(existing) >= recordTimestamp(incoming) ? existing : incoming;
+        const other = winner === existing ? incoming : existing;
+        const combined = { ...other, ...winner };
+        Object.entries(other).forEach(([fieldName, value]) => {
+          if ((combined[fieldName] === "" || combined[fieldName] == null) && value != null && value !== "") {
+            combined[fieldName] = value;
+          }
+        });
+        if (collection === "clients") {
+          const phoneValues = [existing.alternatePhone, incoming.alternatePhone];
+          if (existing.phone && incoming.phone && normalizedText(existing.phone) !== normalizedText(incoming.phone)) {
+            phoneValues.push(existing.phone, incoming.phone);
+          }
+          combined.phone = winner.phone || other.phone || "";
+          combined.alternatePhone = phoneValues
+            .filter((phone) => phone && normalizedText(phone) !== normalizedText(combined.phone))
+            .reduce((value, phone) => mergeText(value, phone, " · "), "");
+          combined.email = winner.email || other.email || "";
+          combined.notes = mergeText(existing.notes, incoming.notes, " | ");
+        } else if (collection === "staff") {
+          combined.email = winner.email || other.email || "";
+          combined.phone = winner.phone || other.phone || "";
+        }
+        records[index] = combined;
+      }
+      merged[collection] = records;
+    }
+    return merged;
+  }
+
+  function mergeCloudPayload(localData, remotePayload) {
+    const remoteData = remotePayload?.data || remotePayload || {};
+    cloudTombstones = mergeTombstoneLists(cloudTombstones,
+      Array.isArray(remotePayload?.tombstones) ? remotePayload.tombstones : []);
+    const data = mergeDataCollections(localData, remoteData);
+    for (const collection of ["calls", "attendance", "meetings", "clients", "staff"]) {
+      data[collection] = data[collection].filter((record) => !cloudTombstones.some((tombstone) =>
+        Date.parse(tombstone.deletedAt) >= recordTimestamp(record) &&
+        recordTombstoneKeys(collection, record).some((key) => tombstone.keys.includes(key))));
+    }
+    return { data, tombstones: cloudTombstones };
+  }
+
+  function updateCloudControls() {
+    const status = document.querySelector("#cloud-status");
+    const detail = document.querySelector("#cloud-detail");
+    const connect = document.querySelector("#cloud-connect");
+    const signOut = document.querySelector("#cloud-signout");
+    const dot = document.querySelector(".cloud-status-dot");
+    if (!status || !detail || !connect || !signOut || !dot) return;
+    status.textContent = cloudSession ? "Cloud storage connected" : "Device only";
+    detail.textContent = cloudSession
+      ? `${cloudSyncStatus} · ${cloudSession.user.email || "Signed in"}`
+      : "Set up a free server account";
+    connect.lastChild.textContent = cloudSession ? "Sync now" : "Connect cloud storage";
+    signOut.hidden = !cloudSession;
+    dot.classList.toggle("cloud-connected", Boolean(cloudSession) && !cloudSyncStatus.startsWith("Sync failed"));
+  }
+
+  function cloudSetupForm() {
+    const projectUrl = cloudConfig?.url || "";
+    const anonKey = cloudConfig?.anonKey || "";
+    const body = `<div class="form-grid">
+      ${field("Supabase project URL", "projectUrl", projectUrl, { required: true, placeholder: "https://your-project.supabase.co", wide: true, hint: "Find this under Project Settings → API. Use the project URL, not a database password." })}
+      ${field("Publishable / anon key", "anonKey", anonKey, { required: true, wide: true, hint: "The public client key is protected by database access rules. Never enter a service_role or secret key here." })}
+      ${field("Account email", "email", "", { type: "email", required: true, wide: true })}
+      ${field("Account password", "password", "", { type: "password", required: true, wide: true, hint: "Create this account in Supabase Authentication first. The password is not saved in this browser." })}
+    </div>`;
+    openModal("Connect private cloud storage", "Sign in to sync your device data to your Supabase project.", "cloud-login", body, "Sign in and sync");
+  }
+
+  function validateCloudConfig(projectUrl, anonKey) {
+    let url;
+    try {
+      url = new URL(projectUrl);
+    } catch {
+      throw new Error("Enter a valid Supabase project URL.");
+    }
+    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("Use the HTTPS Supabase project URL without a path or query.");
+    }
+    if (!anonKey.trim() || /service[_-]?role|secret/i.test(anonKey)) {
+      throw new Error("Enter the public publishable/anon key, never a service_role or secret key.");
+    }
+    return { url: url.origin, anonKey: anonKey.trim() };
+  }
+
+  async function signInCloud(projectUrl, anonKey, email, password) {
+    cloudConfig = validateCloudConfig(projectUrl.trim(), anonKey);
+    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cloudConfig));
+    const response = await fetch(`${cloudConfig.url}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { apikey: cloudConfig.anonKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), password })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.msg || result.message || result.error_description || "Could not sign in to Supabase.");
+    cloudSession = { ...result, expires_at: result.expires_at || Math.floor(Date.now() / 1000) + result.expires_in };
+    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(cloudSession));
+    cloudSyncStatus = "Syncing records…";
+    updateCloudControls();
+    await syncCloudData();
+  }
+
+  async function refreshCloudSession() {
+    if (!cloudSession || !cloudConfig) throw new Error("Sign in to cloud storage first.");
+    if (Number(cloudSession.expires_at) > Math.floor(Date.now() / 1000) + 60) return;
+    const response = await fetch(`${cloudConfig.url}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: cloudConfig.anonKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: cloudSession.refresh_token })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      cloudSession = null;
+      localStorage.removeItem(CLOUD_SESSION_KEY);
+      updateCloudControls();
+      throw new Error(result.msg || result.message || "Your cloud session expired. Sign in again.");
+    }
+    cloudSession = { ...result, expires_at: result.expires_at || Math.floor(Date.now() / 1000) + result.expires_in };
+    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(cloudSession));
+  }
+
+  async function cloudRequest(path, options = {}) {
+    if (!cloudConfig || !cloudSession) throw new Error("Connect to your Supabase project and sign in first.");
+    await refreshCloudSession();
+    const response = await fetch(`${cloudConfig.url}${path}`, {
+      ...options,
+      headers: {
+        apikey: cloudConfig.anonKey,
+        Authorization: `Bearer ${cloudSession.access_token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      let message = responseText;
+      try {
+        const details = JSON.parse(responseText);
+        message = details.message || details.msg || details.hint || details.error || responseText;
+      } catch { /* The response may be plain text. */ }
+      throw new Error(`Cloud request failed (${response.status}): ${message}`);
+    }
+    return responseText ? JSON.parse(responseText) : null;
+  }
+
+  async function syncCloudData() {
+    if (!cloudSession || !cloudConfig) return;
+    if (cloudSyncPromise) return cloudSyncPromise;
+    cloudSyncPromise = (async () => {
+      cloudSyncStatus = "Syncing…";
+      updateCloudControls();
+      const signedInUserId = cloudSession.user.id;
+      const userId = encodeURIComponent(signedInUserId);
+      const rows = await cloudRequest(`/rest/v1/call_time_workspace?select=payload&user_id=eq.${userId}`);
+      if (!cloudSession || cloudSession.user.id !== signedInUserId) return;
+      const remotePayload = rows[0]?.payload || null;
+      const merged = mergeCloudPayload(state.data, remotePayload);
+      state.data = merged.data;
+      if (!persistLocalData() || !persistCloudTombstones()) {
+        throw new Error("Could not save the merged data on this device.");
+      }
+      const payload = { data: state.data, tombstones: merged.tombstones };
+      if (!cloudSession || cloudSession.user.id !== signedInUserId) return;
+      await cloudRequest("/rest/v1/call_time_workspace?on_conflict=user_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          user_id: signedInUserId,
+          payload,
+          updated_at: new Date().toISOString()
+        })
+      });
+      cloudSyncStatus = `Synced ${new Date().toLocaleTimeString("en-KE", { hour: "numeric", minute: "2-digit" })}`;
+      render();
+    })().catch((error) => {
+      console.error("Could not sync Call & Time data with Supabase.", error);
+      cloudSyncStatus = "Sync failed — data remains on this device";
+      toast(`Cloud sync failed: ${error.message}`);
+      updateCloudControls();
+      throw error;
+    }).finally(() => {
+      cloudSyncPromise = null;
+    });
+    return cloudSyncPromise;
+  }
+
+  function scheduleCloudSync() {
+    if (!cloudSession) return;
+    window.clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = window.setTimeout(() => {
+      syncCloudData().catch(() => {});
+    }, 500);
+  }
+
+  async function signOutCloud() {
+    let remoteError;
+    try {
+      if (cloudSession && cloudConfig) await cloudRequest("/auth/v1/logout", { method: "POST" });
+    } catch (error) {
+      console.error("Could not revoke the Supabase session.", error);
+      remoteError = error;
+    } finally {
+      cloudSession = null;
+      cloudSyncStatus = "Device only";
+      localStorage.removeItem(CLOUD_SESSION_KEY);
+      updateCloudControls();
+    }
+    toast(remoteError
+      ? `Signed out on this device. Supabase could not revoke the session: ${remoteError.message}`
+      : "Signed out. This device's saved data was kept.");
+  }
+
+  function initializeCloudSync() {
+    updateCloudControls();
+    if (cloudSession && cloudConfig && navigator.onLine) {
+      syncCloudData().catch(() => {});
+    }
+    if (cloudSession) window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === "visible") syncCloudData().catch(() => {});
+    }, 30000);
+  }
+
   function pageHeading(eyebrow, title, description, action = "") {
     return `<div class="page-heading"><div><div class="eyebrow">${escapeHtml(eyebrow)}</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div>${action}</div>`;
   }
@@ -200,31 +573,34 @@
       reports: renderReports
     };
     content.innerHTML = pages[state.view]();
+    updateCloudControls();
     if (storageFault) {
       content.insertAdjacentHTML("beforeend", '<div class="notice"><strong>Saved data could not be read.</strong> Changes are disabled to protect it. Use Restore backup to load a valid backup.</div>');
     }
   }
 
   function renderOverview() {
-    const todaysCalls = state.data.calls.filter((call) => call.date === today);
+    const selectedDay = state.overviewDay || today;
+    const selectedCalls = state.data.calls.filter((call) => call.date === selectedDay);
     const followUps = state.data.calls.filter((call) => /pending|callback/i.test(call.followUp || ""));
-    const todaysAttendance = state.data.attendance.filter((entry) => entry.date === today);
-    const todaysMeetings = state.data.meetings.filter((meeting) => meeting.date === today).sort((a, b) => a.startTime.localeCompare(b.startTime));
-    const recent = sortedByNewest(state.data.calls).slice(0, 5);
-    const greeting = new Intl.DateTimeFormat("en-KE", { weekday: "long" }).format(dateFromInput(today));
+    const selectedAttendance = state.data.attendance.filter((entry) => entry.date === selectedDay);
+    const selectedMeetings = state.data.meetings.filter((meeting) => meeting.date === selectedDay).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const selectedDateLabel = formatDate(selectedDay, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const recent = sortedByNewest(selectedCalls).slice(0, 5);
+    const greeting = new Intl.DateTimeFormat("en-KE", { weekday: "long" }).format(dateFromInput(selectedDay));
     return `
-      ${pageHeading("YOUR WORKSPACE", `Good ${greeting}`, "A clear view of today's calls, attendance, and appointments.", `<button class="btn btn-primary" type="button" data-action="new-call"><span>＋</span> Log a call</button>`)}
+      ${pageHeading("YOUR WORKSPACE", `Good ${greeting}`, `A clear view of calls, attendance, and appointments for ${selectedDateLabel}.`, `<div class="overview-controls"><label class="overview-date-label" for="overview-day">View date</label><input class="overview-date" id="overview-day" type="date" value="${escapeHtml(selectedDay)}" aria-label="Choose overview date"><button class="btn btn-primary" type="button" data-action="new-call"><span>＋</span> Log a call</button></div>`)}
       <section class="stats-grid">
-        ${statCard("Calls today", todaysCalls.length, `${todaysCalls.filter((call) => call.direction === "Incoming").length} incoming · ${todaysCalls.filter((call) => call.direction === "Outgoing").length} outgoing`, "↗")}
+        ${statCard("Calls on date", selectedCalls.length, `${selectedCalls.filter((call) => call.direction === "Incoming").length} incoming · ${selectedCalls.filter((call) => call.direction === "Outgoing").length} outgoing`, "↗")}
         ${statCard("Follow-ups due", followUps.length, "Across all logged calls", "↻")}
-        ${statCard("Attendance logged", todaysAttendance.length, `${todaysAttendance.filter((entry) => /present|partial/i.test(entry.status)).length} marked present or partial today`, "◷")}
-        ${statCard("Meetings today", todaysMeetings.length, todaysMeetings.length ? `Next: ${formatTime(todaysMeetings[0].startTime)}` : "No meetings scheduled", "▦")}
+        ${statCard("Attendance logged", selectedAttendance.length, `${selectedAttendance.filter((entry) => /present|partial/i.test(entry.status)).length} marked present or partial`, "◷")}
+        ${statCard("Meetings on date", selectedMeetings.length, selectedMeetings.length ? `Next: ${formatTime(selectedMeetings[0].startTime)}` : "No meetings scheduled", "▦")}
       </section>
       <section class="dashboard-grid">
         <article class="panel">
-          <header class="panel-header"><div><h2>Recent calls</h2><p>Your latest incoming and outgoing activity</p></div><button class="text-button" type="button" data-nav="calls">View call log →</button></header>
+          <header class="panel-header"><div><h2>Calls for selected date</h2><p>Incoming and outgoing activity on ${selectedDateLabel}</p></div><button class="text-button" type="button" data-nav="calls">View call log →</button></header>
           ${recent.length ? `<div class="activity-list">${recent.map((call) => `
-            <div class="activity-item"><span class="activity-mark">${call.direction === "Incoming" ? "↙" : "↗"}</span><div class="activity-copy"><div class="activity-title">${escapeHtml(call.client)}</div><div class="activity-meta">${escapeHtml(call.direction)} · ${escapeHtml(call.staff || "No staff selected")} · ${escapeHtml(call.outcome)}</div></div><span class="activity-time">${formatDate(call.date, { day: "numeric", month: "short" })} · ${formatTime(call.time)}</span></div>`).join("")}</div>` : emptyState("No calls logged yet", "Record your first call to start building today's activity.")}
+            <div class="activity-item"><span class="activity-mark">${call.direction === "Incoming" ? "↙" : "↗"}</span><div class="activity-copy"><div class="activity-title">${escapeHtml(call.client)}</div><div class="activity-meta">${escapeHtml(call.direction)} · ${escapeHtml(call.staff || "No staff selected")} · ${escapeHtml(call.outcome)}</div></div><span class="activity-time">${formatDate(call.date, { day: "numeric", month: "short" })} · ${formatTime(call.time)}</span></div>`).join("")}</div>` : emptyState("No calls logged for this date", "Choose another date or record a call for this day.")}
         </article>
         <article class="panel">
           <header class="panel-header"><div><h2>Follow-up queue</h2><p>Callbacks and actions to complete</p></div><span class="badge badge-amber">${followUps.length} open</span></header>
@@ -232,8 +608,8 @@
         </article>
       </section>
       <section class="panel section-spacer">
-        <header class="panel-header"><div><h2>Today's schedule</h2><p>Appointments you've added for ${formatDate(today, { weekday: "long", day: "numeric", month: "long" })}</p></div><button class="text-button" type="button" data-nav="meetings">Manage meetings →</button></header>
-        ${todaysMeetings.length ? `<div class="queue-list">${todaysMeetings.map((meeting) => `<div class="queue-item"><div><div class="queue-title">${escapeHtml(meeting.subject)}</div><div class="queue-meta">${formatTime(meeting.startTime)} – ${formatTime(meeting.endTime)} · ${escapeHtml(meeting.location || "No location")}</div></div><span class="badge">${escapeHtml(meeting.organizer || "No organizer")}</span></div>`).join("")}</div>` : emptyState("Nothing scheduled", "Add a meeting or appointment to your schedule.")}
+        <header class="panel-header"><div><h2>Schedule for selected date</h2><p>Appointments you've added for ${selectedDateLabel}</p></div><button class="text-button" type="button" data-nav="meetings">Manage meetings →</button></header>
+        ${selectedMeetings.length ? `<div class="queue-list">${selectedMeetings.map((meeting) => `<div class="queue-item"><div><div class="queue-title">${escapeHtml(meeting.subject)}</div><div class="queue-meta">${formatTime(meeting.startTime)} – ${formatTime(meeting.endTime)} · ${escapeHtml(meeting.location || "No location")}</div></div><span class="badge">${escapeHtml(meeting.organizer || "No organizer")}</span></div>`).join("")}</div>` : emptyState("Nothing scheduled", "Add a meeting or appointment to your schedule.")}
       </section>`;
   }
 
@@ -685,15 +1061,32 @@
     toast(`${person.name} added to staff.`);
   }
 
-  function handleFormSubmit(event) {
+  async function handleFormSubmit(event) {
     const form = event.target.closest("form[data-form]");
     if (!form) return;
     event.preventDefault();
+    if (!form.reportValidity()) return;
+    if (form.dataset.form === "cloud-login") {
+      const submit = form.querySelector('[type="submit"]');
+      submit.disabled = true;
+      try {
+        const values = Object.fromEntries(new FormData(form).entries());
+        await signInCloud(values.projectUrl, values.anonKey, values.email, values.password);
+        closeModal();
+        render();
+        toast("Cloud storage connected. Your records are synced on this device and in Supabase.");
+      } catch (error) {
+        console.error("Could not connect to Supabase.", error);
+        toast(`Could not connect to cloud storage: ${error.message}`);
+      } finally {
+        if (submit.isConnected) submit.disabled = false;
+      }
+      return;
+    }
     if (storageFault) {
       toast("Changes are disabled until you restore a valid backup.");
       return;
     }
-    if (!form.reportValidity()) return;
     const values = Object.fromEntries(new FormData(form).entries());
     const recordId = form.dataset.recordId || "";
     const edit = recordId ? findRecord(collectionForForm(form.dataset.form), recordId) : null;
@@ -764,6 +1157,14 @@
     if (storageFault) {
       toast("Changes are disabled until you restore a valid backup.");
       return;
+    }
+    const deletedRecord = state.data[collection].find((item) => item.id === recordId);
+    if (deletedRecord) {
+      cloudTombstones = mergeTombstoneLists(cloudTombstones, [{
+        keys: recordTombstoneKeys(collection, deletedRecord),
+        deletedAt: new Date().toISOString()
+      }]);
+      persistCloudTombstones();
     }
     state.data[collection] = state.data[collection].filter((item) => item.id !== recordId);
     const saved = saveData();
@@ -1103,6 +1504,30 @@
     }
   }
 
+  async function mergeBackupFile(file) {
+    try {
+      const imported = JSON.parse(await file.text());
+      const collections = ["calls", "attendance", "meetings", "clients", "staff"];
+      if (!imported || !collections.every((key) => Array.isArray(imported[key]))) {
+        throw new Error("The backup file does not contain all expected data lists.");
+      }
+      if (!window.confirm("Merge this backup with the data on this device? Existing records will be kept and matching entries will be combined.")) return;
+      const previousCounts = Object.fromEntries(collections.map((key) => [key, state.data[key].length]));
+      state.data = mergeDataCollections(state.data, imported);
+      const saved = saveData(true);
+      render();
+      if (saved) {
+        const added = collections.reduce((sum, key) => sum + state.data[key].length - previousCounts[key], 0);
+        toast(`Backup merged. ${added} new records were added; existing records were kept.`);
+      }
+    } catch (error) {
+      console.error("Could not merge the Call & Time backup.", error);
+      toast(`Could not merge backup: ${error.message}`);
+    } finally {
+      document.querySelector("#merge-file").value = "";
+    }
+  }
+
   document.addEventListener("click", (event) => {
     const nav = event.target.closest("[data-nav]");
     if (nav) {
@@ -1147,6 +1572,12 @@
     else if (name === "delete-directory") deleteAction(kind === "client" ? "clients" : "staff", recordId, kind);
     else if (name === "close-modal") closeModal();
     else if (name === "backup") exportBackup();
+    else if (name === "merge-backup") document.querySelector("#merge-file").click();
+    else if (name === "cloud-connect") {
+      if (cloudSession) syncCloudData().catch(() => {});
+      else cloudSetupForm();
+    }
+    else if (name === "cloud-signout") signOutCloud();
     else if (name === "export-csv") exportCallsCsv();
   });
 
@@ -1177,7 +1608,10 @@
     }
   });
   document.addEventListener("change", (event) => {
-    if (event.target.id === "field-direction") {
+    if (event.target.id === "overview-day") {
+      state.overviewDay = event.target.value || today;
+      render();
+    } else if (event.target.id === "field-direction") {
       const label = modalRoot.querySelector('label[for="field-staff"]');
       if (label) label.firstChild.textContent = event.target.value === "Incoming" ? "Staff requested" : "Staff requesting";
     } else if (event.target.id === "attendance-day") {
@@ -1188,6 +1622,8 @@
       render();
     } else if (event.target.id === "restore-file" && event.target.files?.[0]) {
       restoreBackup(event.target.files[0]);
+    } else if (event.target.id === "merge-file" && event.target.files?.[0]) {
+      mergeBackupFile(event.target.files[0]);
     } else if (event.target.id === "client-import-file" && event.target.files?.[0]) {
       importClientsFile(event.target.files[0]);
     } else if (event.target.id === "calendar-import-file" && event.target.files?.[0]) {
@@ -1206,4 +1642,9 @@
   });
 
   render();
+  initializeCloudSync();
+  window.addEventListener("online", () => syncCloudData().catch(() => {}));
+  window.addEventListener("focus", () => {
+    if (cloudSession) syncCloudData().catch(() => {});
+  });
 })();
