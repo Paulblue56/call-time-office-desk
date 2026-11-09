@@ -36,6 +36,7 @@
   let cloudSyncTimer;
   let cloudSyncPromise;
   let cloudTombstones = loadCloudTombstones();
+  let authCallback = readAuthCallback();
 
   const content = document.querySelector("#content");
   const modalRoot = document.querySelector("#modal-root");
@@ -94,6 +95,24 @@
       console.error("Could not read the cloud storage configuration.", error);
     }
     return DEFAULT_CLOUD_CONFIG;
+  }
+
+  function readAuthCallback() {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    const type = params.get("type");
+    if (accessToken && refreshToken && ["invite", "recovery", "signup"].includes(type)) {
+      return {
+        accessToken,
+        refreshToken,
+        expiresAt: Number(params.get("expires_at")) || Math.floor(Date.now() / 1000) + Number(params.get("expires_in") || 3600),
+        type
+      };
+    }
+    const error = new URLSearchParams(window.location.search).get("error_description");
+    if (error) window.setTimeout(() => toast(`Authentication link error: ${error.replace(/\+/g, " ")}`), 0);
+    return null;
   }
 
   function loadCloudSession() {
@@ -404,6 +423,41 @@
     openModal("Connect private cloud storage", "Sign in to sync your device data to your Supabase project.", "cloud-login", body, "Sign in and sync");
   }
 
+  function cloudPasswordForm() {
+    const action = authCallback?.type === "recovery" ? "reset" : "set";
+    const body = `<div class="form-grid">
+      <div class="field wide"><label for="cloud-new-password">New password</label><input class="field-control" id="cloud-new-password" name="password" type="password" autocomplete="new-password" minlength="8" required><span class="field-hint">Use at least 8 characters. Your password is sent only to Supabase Auth and is not saved by this website.</span></div>
+      <div class="field wide"><label for="cloud-confirm-password">Confirm password</label><input class="field-control" id="cloud-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required></div>
+    </div>`;
+    openModal(action === "reset" ? "Reset your cloud password" : "Set your cloud password",
+      "Complete the secure Supabase email link to access your shared workspace.", "cloud-password", body, "Save password");
+  }
+
+  async function completeCloudPassword(password) {
+    if (!authCallback || !cloudConfig) throw new Error("This authentication link has expired. Request a new email link.");
+    const response = await fetch(`${cloudConfig.url}/auth/v1/user`, {
+      method: "PUT",
+      headers: {
+        apikey: cloudConfig.anonKey,
+        Authorization: `Bearer ${authCallback.accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ password })
+    });
+    const user = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(user.msg || user.message || user.error_description || "Could not set the cloud password.");
+    cloudSession = {
+      access_token: authCallback.accessToken,
+      refresh_token: authCallback.refreshToken,
+      expires_at: authCallback.expiresAt,
+      user
+    };
+    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(cloudSession));
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    authCallback = null;
+    await syncCloudData();
+  }
+
   function validateCloudConfig(projectUrl, anonKey) {
     let url;
     try {
@@ -549,6 +603,10 @@
 
   function initializeCloudSync() {
     updateCloudControls();
+    if (authCallback) {
+      cloudPasswordForm();
+      return;
+    }
     if (cloudSession && cloudConfig && navigator.onLine) {
       syncCloudData().catch(() => {});
     }
@@ -1082,6 +1140,28 @@
       } catch (error) {
         console.error("Could not connect to Supabase.", error);
         toast(`Could not connect to cloud storage: ${error.message}`);
+      } finally {
+        if (submit.isConnected) submit.disabled = false;
+      }
+      return;
+    }
+    if (form.dataset.form === "cloud-password") {
+      const submit = form.querySelector('[type="submit"]');
+      submit.disabled = true;
+      try {
+        const values = Object.fromEntries(new FormData(form).entries());
+        if (values.password !== values.confirmPassword) {
+          toast("The passwords do not match.");
+          form.elements.confirmPassword.focus();
+          return;
+        }
+        await completeCloudPassword(values.password);
+        closeModal();
+        render();
+        toast("Password saved. Your cloud workspace is synced.");
+      } catch (error) {
+        console.error("Could not complete cloud account setup.", error);
+        toast(`Could not save your cloud password: ${error.message}`);
       } finally {
         if (submit.isConnected) submit.disabled = false;
       }
