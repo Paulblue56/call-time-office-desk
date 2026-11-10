@@ -9,9 +9,9 @@ const APP_SHELL = [
   "./manifest.webmanifest",
   "./assets/call-time-logo.png",
   "./assets/workspace-background.png",
-  "./assets/app-icon-192.png",
-  "./assets/app-icon-512.png",
-  "./assets/app-icon-maskable-512.png"
+  "./app-icon-192.png",
+  "./app-icon-512.png",
+  "./app-icon-maskable-512.png"
 ];
 
 self.addEventListener("install", (event) => {
