@@ -953,6 +953,70 @@
     return kind === "present" ? attendanceHours(entry) : 0;
   }
 
+  function attendanceClockMinutes(value) {
+    const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value || "");
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  }
+
+  function attendancePunctuality(entry) {
+    if (!/present|partial/i.test(entry.status || "")) return null;
+    const mode = (entry.workMode || "").toLowerCase();
+    const officeToClient = /office\s*(?:->|→|to)\s*client/.test(mode);
+    if (!/office/.test(mode)) return null;
+
+    const scheduledStart = ["07:00", "08:00", "09:00"].includes(entry.scheduledStart)
+      ? entry.scheduledStart
+      : "";
+    const startMinutes = attendanceClockMinutes(scheduledStart);
+    const inMinutes = attendanceClockMinutes(entry.timeIn);
+    const outMinutes = attendanceClockMinutes(entry.timeOut);
+    const endMinutes = startMinutes === null ? null : startMinutes + 9 * 60;
+    const scheduledEnd = endMinutes === null
+      ? ""
+      : `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+    const lateMinutes = startMinutes !== null && inMinutes !== null
+      ? Math.max(0, inMinutes - startMinutes)
+      : null;
+    const earlyMinutes = !officeToClient && endMinutes !== null && outMinutes !== null
+      ? Math.max(0, endMinutes - outMinutes)
+      : null;
+    const creditedHours = officeToClient ? 8 : weeklyWorkedHours(entry);
+    const shortHours = !officeToClient && startMinutes !== null
+      ? Math.max(0, 8 - creditedHours)
+      : null;
+
+    const findings = [];
+    if (startMinutes === null) findings.push("Scheduled start not recorded");
+    else if (inMinutes === null) findings.push("Clock-in not recorded");
+    else if (lateMinutes > 0) findings.push(`Late by ${formatMinuteDifference(lateMinutes)}`);
+    if (!officeToClient && startMinutes !== null && outMinutes === null) findings.push("Clock-out not recorded");
+    else if (earlyMinutes > 0) findings.push(`Left before scheduled finish by ${formatMinuteDifference(earlyMinutes)}`);
+    if (shortHours > 0) findings.push(`${formatHours(shortHours)} short of 8 hours`);
+    return findings.length ? { entry, scheduledEnd, creditedHours, findings } : null;
+  }
+
+  function formatMinuteDifference(minutes) {
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return [hours ? `${hours}h` : "", remainingMinutes ? `${remainingMinutes}m` : ""].filter(Boolean).join(" ") || "0m";
+  }
+
+  function attendanceExceptionTable(entries) {
+    const exceptions = entries.map(attendancePunctuality).filter(Boolean)
+      .sort((a, b) => a.entry.date.localeCompare(b.entry.date) || a.entry.staff.localeCompare(b.entry.staff));
+    if (!exceptions.length) return `<p class="table-empty">No late arrivals or early departures recorded for this week.</p>`;
+    return `<p class="field-hint" style="margin:0 15px 12px">Remote and direct-to-client days are not assessed. For Office → Client, arrival is checked but departure is not treated as an early finish because staff may be travelling to a client. Missing schedule or clock times are shown as not recorded.</p>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Staff</th><th>Planned shift</th><th>Clock in</th><th>Clock out</th><th>Hours credited</th><th>Report</th></tr></thead><tbody>${exceptions.map(({ entry, scheduledEnd, creditedHours, findings }) => `<tr>
+        <td>${formatDate(entry.date)}</td>
+        <td><strong>${escapeHtml(entry.staff)}</strong></td>
+        <td>${entry.scheduledStart && scheduledEnd ? `${escapeHtml(entry.scheduledStart)}–${escapeHtml(scheduledEnd)}` : "—"}</td>
+        <td>${formatTime(entry.timeIn)}</td>
+        <td>${formatTime(entry.timeOut)}</td>
+        <td>${formatHours(creditedHours)}</td>
+        <td>${escapeHtml(findings.join(" · "))}</td>
+      </tr>`).join("")}</tbody></table></div>`;
+  }
+
   function renderCallReport() {
     const calls = currentWeekCalls();
     const incoming = calls.filter((call) => call.direction === "Incoming").length;
@@ -1036,7 +1100,7 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Full Present days and approved leave or sick leave count as 8 hours toward weekly totals and variance.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday totals, office punctuality, and approved leave or sick hours.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1053,6 +1117,9 @@
       </section>
       <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays.</p></div></header>
         ${attendanceReportTable(summary)}
+      </section>
+      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Late arrivals and early departures</h2><p>Office shifts are checked against each entry’s planned start and a finish nine hours later. No grace period applies.</p></div></header>
+        ${attendanceExceptionTable(attendance)}
       </section>
       <section class="daily-attendance-list section-spacer" aria-label="Daily attendance for the selected workweek">
         ${dates.map((date) => dailyAttendanceReport(date, attendance.filter((entry) => entry.date === date))).join("")}
@@ -1146,7 +1213,10 @@
     const optional = options.required ? "" : `<span class="optional"> · optional</span>`;
     let control = "";
     if (options.type === "select") {
-      control = `<select class="field-control" id="field-${name}" name="${name}"${required}>${options.options.map((option) => `<option value="${escapeHtml(option)}" ${value === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+      const emptyOption = options.emptyOption
+        ? `<option value="" ${value ? "" : "selected"}>${escapeHtml(options.emptyOption)}</option>`
+        : "";
+      control = `<select class="field-control" id="field-${name}" name="${name}"${required}>${emptyOption}${options.options.map((option) => `<option value="${escapeHtml(option)}" ${value === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
     } else if (options.type === "textarea") {
       control = `<textarea id="field-${name}" name="${name}"${required} placeholder="${escapeHtml(options.placeholder || "")}">${escapeHtml(value)}</textarea>`;
     } else {
@@ -1211,12 +1281,13 @@
       ${field("Date", "date", existing?.date || state.attendanceDay, { type: "date", required: true })}
       ${field("Status", "status", existing?.status || "Present", { type: "select", options: ["Present", "Partial", "Leave", "Sick Leave", "Absent"], required: true })}
       ${field("Work mode", "workMode", existing?.workMode || "Office", { type: "select", options: ["Office", "Client Direct", "Office -> Client", "Remote", "Other"] })}
+      ${field("Scheduled start", "scheduledStart", existing?.scheduledStart ?? (existing ? "" : "08:00"), { type: "select", options: ["07:00", "08:00", "09:00"], emptyOption: "Not recorded" })}
       ${field("Time in", "timeIn", existing?.timeIn || "", { type: "time" })}
       ${field("Time out", "timeOut", existing?.timeOut || "", { type: "time" })}
       ${field("Client / location", "location", existing?.location || "", { placeholder: "Client visit, office, or location" })}
       ${field("Expected hours", "expectedHours", existing?.expectedHours ?? 8, { type: "number", step: "0.25", required: true })}
       ${field("Notes", "notes", existing?.notes || "", { type: "textarea", wide: true, placeholder: "Optional attendance notes" })}
-    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">For Present staff working in the office, enter start and end times; hours are calculated from the recorded interval less the one-hour lunch break. If those times are missing, only manually recorded hours are counted. Approved leave and sick leave count as 8 hours; other full-day work modes count as 8 hours. Partial shifts use recorded times less lunch.</p>`;
+    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">For office shifts, record the planned start (07:00, 08:00, or 09:00) and actual clock-in/out. The weekly report checks lateness and early departure with no grace period; scheduled finish is 9 hours after the planned start. Remote and direct-to-client work count as 8 hours and are not assessed for lateness. Office → Client arrivals are checked, but leaving the office for client work is not counted as leaving early.</p>`;
     openModal(existing ? "Edit attendance" : "Add attendance", "Record one staff member's attendance for a day.", "attendance", body, existing ? "Save changes" : "Save attendance", recordId);
   }
 
@@ -1560,19 +1631,25 @@
   }
 
   function exportAttendanceCsv() {
-    const rows = [["Date", "Staff", "Status", "Work Mode", "Time In", "Time Out", "Hours Worked", "Expected Hours", "Client / Location", "Notes"]];
-    currentWeekAttendance().forEach((entry) => rows.push([
-      entry.date,
-      entry.staff,
-      entry.status,
-      entry.workMode,
-      entry.timeIn,
-      entry.timeOut,
-      weeklyWorkedHours(entry),
-      entry.expectedHours,
-      entry.location,
-      entry.notes
-    ]));
+    const rows = [["Date", "Staff", "Status", "Work Mode", "Scheduled Start", "Scheduled Finish", "Time In", "Time Out", "Hours Worked", "Punctuality Findings", "Expected Hours", "Client / Location", "Notes"]];
+    currentWeekAttendance().forEach((entry) => {
+      const punctuality = attendancePunctuality(entry);
+      rows.push([
+        entry.date,
+        entry.staff,
+        entry.status,
+        entry.workMode,
+        entry.scheduledStart,
+        punctuality?.scheduledEnd,
+        entry.timeIn,
+        entry.timeOut,
+        weeklyWorkedHours(entry),
+        punctuality?.findings.join("; "),
+        entry.expectedHours,
+        entry.location,
+        entry.notes
+      ]);
+    });
     download(`call-time-attendance-week-${state.reportStart}.csv`, "text/csv;charset=utf-8", rows.map((row) => row.map(csvCell).join(",")).join("\r\n"));
     toast("Weekly attendance CSV downloaded.");
   }
