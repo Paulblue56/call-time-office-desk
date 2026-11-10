@@ -828,8 +828,9 @@
     const status = (entry.status || "").toLowerCase();
     const mode = (entry.workMode || "").toLowerCase();
     if (/leave|sick/.test(status)) return 8;
+    if (/client|direct|remote|home/.test(mode)) return 8;
     const presentInOffice = /present/.test(status) && /office/.test(mode);
-    if (!presentInOffice && (/present/.test(status) || /client|direct|remote|home/.test(mode))) return 8;
+    if (!presentInOffice && /present/.test(status)) return 8;
     if (entry.timeIn && entry.timeOut) {
       const [inHour, inMinute] = entry.timeIn.split(":").map(Number);
       const [outHour, outMinute] = entry.timeOut.split(":").map(Number);
