@@ -278,6 +278,10 @@
     return /pending|awaiting callback|in progress/i.test(call.followUp || "");
   }
 
+  function isCallbackCompleted(call) {
+    return /^callback completed$/i.test((call.followUp || "").trim());
+  }
+
   function isSuccessfulCall(call) {
     return /succeed|success/i.test(call.outcome || "");
   }
@@ -949,6 +953,7 @@
     const incoming = calls.filter((call) => call.direction === "Incoming").length;
     const outgoing = calls.filter((call) => call.direction === "Outgoing").length;
     const succeeded = calls.filter(isSuccessfulCall).length;
+    const callbackCompleted = calls.filter(isCallbackCompleted).length;
     const pending = pendingCallbackCount(calls);
     const unavailable = calls.filter((call) => /unavailable|unreachable/i.test(call.outcome || "")).length;
     const days = Array.from({ length: 5 }, (_, index) => {
@@ -966,14 +971,16 @@
     });
     const busiest = Math.max(0, ...days.map((day) => day.total));
     const busiestDays = busiest ? days.filter((day) => day.total === busiest).map((day) => day.label).join(", ") : "—";
-    const completionRate = calls.length ? Math.round(succeeded / calls.length * 100) : 0;
+    const completed = succeeded + callbackCompleted;
+    const completionRate = calls.length ? Math.round(completed / calls.length * 100) : 0;
     const otherOutcomes = calls.filter((call) =>
       !isSuccessfulCall(call) &&
+      !isCallbackCompleted(call) &&
       !isOpenCallback(call) &&
       !/unavailable|unreachable/i.test(call.outcome || "")
     ).length;
     const narrative = calls.length
-      ? `${calls.length} calls were logged: ${incoming} incoming and ${outgoing} outgoing. ${succeeded} were succeeded or callback-completed, ${pending} callback thread${pending === 1 ? " remains" : "s remain"} pending, and ${unavailable} were unavailable or unreachable. ${busiest ? `${busiestDays} ${busiest === 1 ? "was" : "were"} busiest with ${busiest} call${busiest === 1 ? "" : "s"}.` : "There was no call activity on the five workdays."}`
+      ? `${calls.length} calls were logged: ${incoming} incoming and ${outgoing} outgoing. ${succeeded} call${succeeded === 1 ? " outcome was" : " outcomes were"} successful, and ${callbackCompleted} failed attempt${callbackCompleted === 1 ? " had" : "s had"} a callback completed. Together, ${completed} of ${calls.length} calls or callback follow-ups were completed (${completionRate}%). ${pending} callback thread${pending === 1 ? " remains" : "s remain"} pending, and ${unavailable} were unavailable or unreachable. ${busiest ? `${busiestDays} ${busiest === 1 ? "was" : "were"} busiest with ${busiest} call${busiest === 1 ? "" : "s"}.` : "There was no call activity on the five workdays."}`
       : "No calls were logged during this Monday–Friday workweek.";
     return `
       ${pageHeading("CALL ACTIVITY", "Weekly calls", "Workbook-style Monday–Friday call summary, callback status, and daily activity.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-csv">Export calls CSV</button></div>`)}
@@ -989,16 +996,17 @@
         ${statCard("Incoming Calls", incoming, "Received during the workweek", "↙")}
         ${statCard("Outgoing Calls", outgoing, "Made during the workweek", "↗")}
         ${statCard("Total Calls", calls.length, "Monday to Friday", "☎")}
-        ${statCard("Succeeded", succeeded, `${completionRate}% call completion rate`, "✓")}
+        ${statCard("Succeeded", succeeded, "Successful call outcomes", "✓")}
         ${statCard("Pending Callbacks", pending, "Distinct client and staff threads", "↻")}
-        ${statCard("Completion Rate", `${completionRate}%`, `${succeeded} succeeded or callback-completed`, "✓")}
+        ${statCard("Completion Rate", `${completionRate}%`, `${succeeded} succeeded + ${callbackCompleted} callback completed`, "✓")}
         ${statCard("Unavailable / Unreachable", unavailable, "Calls with these outcomes", "×")}
         ${statCard("Busiest Day", busiestDays, busiest ? `${busiest} call${busiest === 1 ? "" : "s"}` : "No calls this week", "▦")}
       </section>
       <section class="report-grid">
         <article class="panel"><header class="panel-header"><div><h2>Outcome groups</h2><p>Callback completion is matched by client, staff, and call time.</p></div></header>
           <div class="metric-list">
-            <div class="metric-row"><span>Succeeded / callback completed</span><strong>${succeeded}</strong></div>
+            <div class="metric-row"><span>Succeeded call outcomes</span><strong>${succeeded}</strong></div>
+            <div class="metric-row"><span>Callback completed (initial call failed)</span><strong>${callbackCompleted}</strong></div>
             <div class="metric-row"><span>Pending callback threads</span><strong>${pending}</strong></div>
             <div class="metric-row"><span>Unavailable / unreachable</span><strong>${unavailable}</strong></div>
             <div class="metric-row"><span>Other outcomes</span><strong>${otherOutcomes}</strong></div>
