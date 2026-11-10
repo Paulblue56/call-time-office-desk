@@ -20,3 +20,7 @@ The public website code does not contain customer data or Supabase secrets.
 6. On each other device, open the hosted website, choose **Connect cloud storage**, and sign in to the same Supabase account. Records sync on sign-in, after local changes, when a device reconnects or regains focus, and every 30 seconds while the site is open; browser storage remains a local copy.
 
 The cloud integration uses Supabase Auth and its REST API directly; no server credential is embedded in the website. Cloud sync requires the SQL setup and account above. If the free project pauses, resume it in Supabase before syncing.
+
+## Weekly reports
+
+Weekly calls and weekly attendance have separate tabs. Weekly attendance covers Monday through Friday, shows the 40-hour target and staff variance, and includes the daily attendance list for each of the five workdays.

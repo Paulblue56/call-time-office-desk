@@ -267,7 +267,7 @@
   }
 
   function currentWeekAttendance(start = state.reportStart) {
-    const end = addDays(start, 6);
+    const end = addDays(start, 4);
     return state.data.attendance.filter((entry) => entry.date >= start && entry.date <= end);
   }
 
@@ -824,6 +824,23 @@
     return `<div class="notice"><strong>${formatDate(state.reportStart)} – ${formatDate(addDays(state.reportStart, 6))}</strong> · Choose any date to view the week that contains it.</div>`;
   }
 
+  function reportWeekDates() {
+    return Array.from({ length: 5 }, (_, index) => addDays(state.reportStart, index));
+  }
+
+  function attendanceDayKind(entry) {
+    const status = (entry.status || "").toLowerCase();
+    if (/sick/.test(status)) return "sick";
+    if (/leave/.test(status)) return "leave";
+    if (/absent/.test(status)) return "absent";
+    if (/present|partial/.test(status)) return "present";
+    return "other";
+  }
+
+  function weeklyWorkedHours(entry) {
+    return attendanceDayKind(entry) === "present" ? attendanceHours(entry) : 0;
+  }
+
   function renderCallReport() {
     const calls = currentWeekCalls();
     const incoming = calls.filter((call) => call.direction === "Incoming").length;
@@ -865,35 +882,113 @@
 
   function renderAttendanceReport() {
     const attendance = currentWeekAttendance();
-    const present = attendance.filter((entry) => /present|partial/i.test(entry.status)).length;
-    const leave = attendance.filter((entry) => /leave|sick/i.test(entry.status)).length;
-    const hours = attendance.reduce((sum, entry) => sum + attendanceHours(entry), 0);
-    const expected = attendance.reduce((sum, entry) => sum + (Number(entry.expectedHours) || 8), 0);
+    const dates = reportWeekDates();
+    const summary = weeklyAttendanceSummary(attendance);
+    const targetHours = summary.length * 40;
+    const hours = summary.reduce((sum, row) => sum + row.hours, 0);
+    const variance = hours - targetHours;
+    const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Review staff attendance and hours for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
-      ${reportWeekNotice()}
-      <section class="stats-grid">
-        ${statCard("Attendance entries", attendance.length, "For the selected week", "◷")}
-        ${statCard("Present / partial", present, "Recorded attendance entries", "✓")}
-        ${statCard("Leave / sick", leave, "Leave and sick leave entries", "＋")}
-        ${statCard("Hours recorded", formatHours(hours), `${formatHours(expected)} expected`, "⌛")}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Compare each staff member’s hours and daily attendance for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      <section class="panel weekly-period">
+        <div class="weekly-period-summary">
+          <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
+          <div><span>Week End</span><strong>${formatDate(dates[4])}</strong></div>
+          <div><span>Working days</span><strong>Monday – Friday · 5 days</strong></div>
+        </div>
+        <div class="workweek-dates">${dates.map((date) => `<div class="workday-date"><span>${formatDate(date, { weekday: "long" })}</span><strong>${formatDate(date)}</strong></div>`).join("")}</div>
       </section>
-      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Attendance summary</h2><p>Weekly hours and attendance by staff member</p></div></header>
-        ${attendanceReportTable(attendance)}
+      <section class="weekly-totals" aria-label="Weekly attendance totals">
+        <div class="weekly-total"><span>Total Hours</span><strong>${formatHours(hours)}</strong></div>
+        <div class="weekly-total"><span>Target Hours</span><strong>${formatHours(targetHours)}</strong></div>
+        <div class="weekly-total"><span>Variance Hours</span><strong>${formatHours(variance)}</strong></div>
+        <div class="weekly-total"><span>Coverage</span><strong>${coverage}%</strong></div>
+      </section>
+      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays.</p></div></header>
+        ${attendanceReportTable(summary)}
+      </section>
+      <section class="daily-attendance-list section-spacer" aria-label="Daily attendance for the selected workweek">
+        ${dates.map((date) => dailyAttendanceReport(date, attendance.filter((entry) => entry.date === date))).join("")}
       </section>`;
   }
 
-  function attendanceReportTable(entries) {
+  function weeklyAttendanceSummary(entries) {
     const byStaff = new Map();
-    entries.forEach((entry) => {
-      const current = byStaff.get(entry.staff) || { days: 0, hours: 0, leave: 0 };
-      current.days += /present|partial/i.test(entry.status) ? 1 : 0;
-      current.leave += /leave|sick/i.test(entry.status) ? 1 : 0;
-      current.hours += attendanceHours(entry);
-      byStaff.set(entry.staff, current);
+    state.data.staff.forEach((staff) => {
+      if (staff.name) byStaff.set(staff.name, []);
     });
-    if (!byStaff.size) return emptyState("No attendance this week", "Attendance records added during the selected week will appear here.");
-    return `<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Present days</th><th>Leave / sick</th><th>Hours worked</th></tr></thead><tbody>${[...byStaff.entries()].sort(([a],[b]) => a.localeCompare(b)).map(([name, data]) => `<tr><td><strong>${escapeHtml(name)}</strong></td><td>${data.days}</td><td>${data.leave}</td><td><strong>${formatHours(data.hours)}</strong></td></tr>`).join("")}</tbody></table></div>`;
+    entries.forEach((entry) => {
+      if (!entry.staff) return;
+      if (!byStaff.has(entry.staff)) byStaff.set(entry.staff, []);
+      byStaff.get(entry.staff).push(entry);
+    });
+    return [...byStaff.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, records]) => {
+      const byDay = new Map();
+      records.forEach((entry) => {
+        const bucket = byDay.get(entry.date) || [];
+        bucket.push(entry);
+        byDay.set(entry.date, bucket);
+      });
+      let presentDays = 0;
+      let leaveDays = 0;
+      let sickDays = 0;
+      let clientDays = 0;
+      let officeDays = 0;
+      let workedHours = 0;
+      byDay.forEach((dayEntries) => {
+        const kinds = dayEntries.map(attendanceDayKind);
+        const worked = kinds.includes("present");
+        if (worked) presentDays += 1;
+        if (kinds.includes("leave")) leaveDays += 1;
+        if (kinds.includes("sick")) sickDays += 1;
+        if (!worked) return;
+        let clientWork = false;
+        let officeWork = false;
+        dayEntries.forEach((entry) => {
+          workedHours += weeklyWorkedHours(entry);
+          const mode = (entry.workMode || "").toLowerCase();
+          if (/client|direct/.test(mode) || (/other/.test(mode) && entry.location)) clientWork = true;
+          else if (/office/.test(mode)) officeWork = true;
+        });
+        if (clientWork) clientDays += 1;
+        else if (officeWork) officeDays += 1;
+      });
+      const variance = workedHours - 40;
+      const flags = variance < 0 ? "Below target" : variance > 0 ? "Above target" : "On target";
+      return { name, presentDays, hours: workedHours, targetHours: 40, variance, leaveDays, sickDays, clientDays, officeDays, flags };
+    });
+  }
+
+  function attendanceReportTable(rows) {
+    if (!rows.length) return emptyState("No staff in the directory", "Add staff or attendance entries to build the weekly summary.");
+    return `<div class="table-wrap"><table class="weekly-attendance-table"><thead><tr><th>Staff Name</th><th>Present Days</th><th>Hours Worked</th><th>Target Hours</th><th>Variance Hours</th><th>Leave Days</th><th>Sick Days</th><th>Client Days</th><th>Office Days</th><th>Flags</th></tr></thead><tbody>${rows.map((row) => `<tr>
+      <td><strong>${escapeHtml(row.name)}</strong></td>
+      <td>${row.presentDays}</td>
+      <td>${formatHours(row.hours)}</td>
+      <td>${formatHours(row.targetHours)}</td>
+      <td class="${row.variance < 0 ? "variance-negative" : row.variance > 0 ? "variance-positive" : ""}">${formatHours(row.variance)}</td>
+      <td>${row.leaveDays}</td>
+      <td>${row.sickDays}</td>
+      <td>${row.clientDays}</td>
+      <td>${row.officeDays}</td>
+      <td><span class="attendance-flag${row.variance < 0 ? " attendance-flag-below" : row.variance > 0 ? " attendance-flag-above" : ""}">${row.flags}</span></td>
+    </tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function dailyAttendanceReport(date, entries) {
+    const dayLabel = formatDate(date, { weekday: "long", day: "numeric", month: "short", year: "numeric" });
+    const sorted = [...entries].sort((a, b) => a.staff.localeCompare(b.staff));
+    return `<section class="table-card daily-attendance-card"><header class="table-card-header"><div><h2>${dayLabel}</h2><p>${sorted.length} attendance ${sorted.length === 1 ? "entry" : "entries"}</p></div></header>
+      <div class="table-wrap"><table><thead><tr><th>Staff Name</th><th>Status</th><th>Work Mode</th><th>Hours Worked</th><th>Time In / Out</th><th>Client / Location</th><th>Notes</th></tr></thead><tbody>${sorted.length ? sorted.map((entry) => `<tr>
+        <td><strong>${escapeHtml(entry.staff)}</strong></td>
+        <td>${badge(entry.status)}</td>
+        <td>${escapeHtml(entry.workMode || "—")}</td>
+        <td>${formatHours(weeklyWorkedHours(entry))}</td>
+        <td>${formatTime(entry.timeIn)}${entry.timeOut ? ` – ${formatTime(entry.timeOut)}` : ""}</td>
+        <td>${escapeHtml(entry.location || "—")}</td>
+        <td>${escapeHtml(entry.notes || "—")}</td>
+      </tr>`).join("") : `<tr><td class="table-empty" colspan="7">No attendance entries recorded for this workday.</td></tr>`}</tbody></table></div>
+    </section>`;
   }
 
   function field(label, name, value = "", options = {}) {
@@ -1324,7 +1419,7 @@
       entry.workMode,
       entry.timeIn,
       entry.timeOut,
-      attendanceHours(entry),
+      weeklyWorkedHours(entry),
       entry.expectedHours,
       entry.location,
       entry.notes
