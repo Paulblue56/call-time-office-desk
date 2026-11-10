@@ -46,7 +46,8 @@
     attendance: "Attendance",
     meetings: "Meetings",
     directory: "Directory",
-    reports: "Weekly report"
+    "call-report": "Weekly calls",
+    "attendance-report": "Weekly attendance"
   };
 
   function loadData() {
@@ -632,7 +633,8 @@
       attendance: renderAttendance,
       meetings: renderMeetings,
       directory: renderDirectory,
-      reports: renderReports
+      "call-report": renderCallReport,
+      "attendance-report": renderAttendanceReport
     };
     content.innerHTML = pages[state.view]();
     updateCloudControls();
@@ -814,16 +816,21 @@
         <div class="table-wrap"><table><thead><tr><th>Staff member</th><th>Email</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${directoryRows(staff, "staff")}</tbody></table></div></section>`;
   }
 
-  function renderReports() {
+  function reportDateControl() {
+    return `<div class="report-controls"><label for="report-start">Week starting</label><input id="report-start" class="field-control" type="date" value="${escapeHtml(state.reportStart)}"></div>`;
+  }
+
+  function reportWeekNotice() {
+    return `<div class="notice"><strong>${formatDate(state.reportStart)} – ${formatDate(addDays(state.reportStart, 6))}</strong> · Choose any date to view the week that contains it.</div>`;
+  }
+
+  function renderCallReport() {
     const calls = currentWeekCalls();
-    const attendance = currentWeekAttendance();
     const incoming = calls.filter((call) => call.direction === "Incoming").length;
     const outgoing = calls.length - incoming;
     const succeeded = calls.filter((call) => /succeed/i.test(call.outcome)).length;
     const pending = calls.filter((call) => /pending|callback/i.test(call.followUp || "")).length;
     const unavailable = calls.filter((call) => /unavailable|unreachable|no answer/i.test(call.outcome)).length;
-    const hours = attendance.reduce((sum, entry) => sum + attendanceHours(entry), 0);
-    const expected = attendance.reduce((sum, entry) => sum + (Number(entry.expectedHours) || 8), 0);
     const days = Array.from({ length: 5 }, (_, index) => {
       const date = addDays(state.reportStart, index);
       const count = calls.filter((call) => call.date === date).length;
@@ -831,13 +838,13 @@
     });
     const maxDay = Math.max(1, ...days.map((day) => day.count));
     return `
-      ${pageHeading("ACTIVITY SUMMARY", "Weekly report", "A quick view of your calls and attendance for the selected week.", `<div class="report-controls"><label for="report-start">Week starting</label><input id="report-start" class="field-control" type="date" value="${escapeHtml(state.reportStart)}"></div>`)}
-      <div class="notice"><strong>${formatDate(state.reportStart)} – ${formatDate(addDays(state.reportStart, 6))}</strong> · Choose any date to view the week that contains it. For the workbook's Friday PDF email or Outlook synchronization, an external automation connection is required.</div>
+      ${pageHeading("CALL ACTIVITY", "Weekly calls", "Review call outcomes and activity by day for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-csv">Export calls CSV</button></div>`)}
+      ${reportWeekNotice()}
       <section class="stats-grid">
         ${statCard("Total calls", calls.length, `${incoming} incoming · ${outgoing} outgoing`, "↗")}
         ${statCard("Succeeded", succeeded, calls.length ? `${Math.round(succeeded / calls.length * 100)}% of calls` : "No calls this week", "✓")}
         ${statCard("Callbacks pending", pending, "Follow-ups still open", "↻")}
-        ${statCard("Hours recorded", formatHours(hours), `${formatHours(expected)} expected across ${attendance.length} attendance entries`, "◷")}
+        ${statCard("Unanswered", unavailable, "Unavailable, unreachable, or no answer", "×")}
       </section>
       <section class="report-grid">
         <article class="panel"><header class="panel-header"><div><h2>Call outcomes</h2><p>${unavailable} unavailable, unreachable, or unanswered</p></div></header>
@@ -853,7 +860,25 @@
           <div class="day-bars">${days.map((day) => `<div class="day-bar-row"><span>${day.label}</span><div class="progress-track"><div class="progress-fill" style="width:${Math.round(day.count / maxDay * 100)}%"></div></div><strong>${day.count}</strong></div>`).join("")}</div>
         </article>
       </section>
-      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Attendance summary</h2><p>Weekly hours by staff member</p></div><button class="btn btn-secondary btn-small" type="button" data-action="export-csv">Export calls CSV</button></header>
+      `;
+  }
+
+  function renderAttendanceReport() {
+    const attendance = currentWeekAttendance();
+    const present = attendance.filter((entry) => /present|partial/i.test(entry.status)).length;
+    const leave = attendance.filter((entry) => /leave|sick/i.test(entry.status)).length;
+    const hours = attendance.reduce((sum, entry) => sum + attendanceHours(entry), 0);
+    const expected = attendance.reduce((sum, entry) => sum + (Number(entry.expectedHours) || 8), 0);
+    return `
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Review staff attendance and hours for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${reportWeekNotice()}
+      <section class="stats-grid">
+        ${statCard("Attendance entries", attendance.length, "For the selected week", "◷")}
+        ${statCard("Present / partial", present, "Recorded attendance entries", "✓")}
+        ${statCard("Leave / sick", leave, "Leave and sick leave entries", "＋")}
+        ${statCard("Hours recorded", formatHours(hours), `${formatHours(expected)} expected`, "⌛")}
+      </section>
+      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Attendance summary</h2><p>Weekly hours and attendance by staff member</p></div></header>
         ${attendanceReportTable(attendance)}
       </section>`;
   }
@@ -1290,6 +1315,24 @@
     toast("Weekly calls CSV downloaded.");
   }
 
+  function exportAttendanceCsv() {
+    const rows = [["Date", "Staff", "Status", "Work Mode", "Time In", "Time Out", "Hours Worked", "Expected Hours", "Client / Location", "Notes"]];
+    currentWeekAttendance().forEach((entry) => rows.push([
+      entry.date,
+      entry.staff,
+      entry.status,
+      entry.workMode,
+      entry.timeIn,
+      entry.timeOut,
+      attendanceHours(entry),
+      entry.expectedHours,
+      entry.location,
+      entry.notes
+    ]));
+    download(`call-time-attendance-week-${state.reportStart}.csv`, "text/csv;charset=utf-8", rows.map((row) => row.map(csvCell).join(",")).join("\r\n"));
+    toast("Weekly attendance CSV downloaded.");
+  }
+
   function unfoldIcalLines(text) {
     return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").reduce((lines, line) => {
       if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += line.slice(1);
@@ -1663,6 +1706,7 @@
     }
     else if (name === "cloud-signout") signOutCloud();
     else if (name === "export-csv") exportCallsCsv();
+    else if (name === "export-attendance-csv") exportAttendanceCsv();
   });
 
   document.addEventListener("submit", handleFormSubmit);
