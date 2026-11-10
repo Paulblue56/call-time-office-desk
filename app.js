@@ -945,7 +945,9 @@
   }
 
   function weeklyWorkedHours(entry) {
-    return attendanceDayKind(entry) === "present" ? attendanceHours(entry) : 0;
+    const kind = attendanceDayKind(entry);
+    if (kind === "leave" || kind === "sick") return 8;
+    return kind === "present" ? attendanceHours(entry) : 0;
   }
 
   function renderCallReport() {
@@ -1031,7 +1033,7 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Compare each staff member’s hours and daily attendance for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Approved leave and sick leave count as 8 hours toward weekly totals and variance.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1083,11 +1085,13 @@
         if (worked) presentDays += 1;
         if (kinds.includes("leave")) leaveDays += 1;
         if (kinds.includes("sick")) sickDays += 1;
+        dayEntries.forEach((entry) => {
+          workedHours += weeklyWorkedHours(entry);
+        });
         if (!worked) return;
         let clientWork = false;
         let officeWork = false;
         dayEntries.forEach((entry) => {
-          workedHours += weeklyWorkedHours(entry);
           const mode = (entry.workMode || "").toLowerCase();
           if (/client|direct/.test(mode) || (/other/.test(mode) && entry.location)) clientWork = true;
           else if (/office/.test(mode)) officeWork = true;
