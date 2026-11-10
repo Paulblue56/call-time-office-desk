@@ -171,6 +171,7 @@
       toast("Saved data could not be read, so changes were not saved. Restore a valid backup to continue.");
       return false;
     }
+    reconcileCompletedCallbacks();
     stampLocalDataChanges();
     if (!persistLocalData()) return false;
     if (allowRecovery) storageFault = false;
@@ -262,8 +263,61 @@
   }
 
   function currentWeekCalls(start = state.reportStart) {
-    const end = addDays(start, 6);
+    const end = addDays(start, 4);
     return state.data.calls.filter((call) => call.date >= start && call.date <= end);
+  }
+
+  function callbackKey(call) {
+    const client = normalizedText(call.client);
+    const staff = normalizedText(call.staff);
+    return client && staff ? `${client}|${staff}` : "";
+  }
+
+  function isOpenCallback(call) {
+    return /pending|awaiting callback|in progress/i.test(call.followUp || "");
+  }
+
+  function isSuccessfulCall(call) {
+    return /succeed|success/i.test(call.outcome || "") ||
+      /^(callback completed|completed)$/i.test((call.followUp || "").trim());
+  }
+
+  function callTimestamp(call) {
+    return `${call.date || ""}T${call.time || "00:00"}`;
+  }
+
+  function reconcileCompletedCallbacks() {
+    const successfulCalls = state.data.calls.filter(isSuccessfulCall);
+    let changed = false;
+    state.data.calls.forEach((call) => {
+      if (!isOpenCallback(call)) return;
+      const key = callbackKey(call);
+      if (!key) return;
+      const completedLater = successfulCalls.some((success) =>
+        success.id !== call.id &&
+        callbackKey(success) === key &&
+        callTimestamp(success) > callTimestamp(call)
+      );
+      if (completedLater) {
+        call.followUp = "Callback Completed";
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function pendingCallbackThreads(calls) {
+    const threads = new Map();
+    calls.filter(isOpenCallback).forEach((call) => {
+      const key = callbackKey(call) || call.id;
+      const current = threads.get(key);
+      if (!current || callTimestamp(call) > callTimestamp(current)) threads.set(key, call);
+    });
+    return [...threads.values()];
+  }
+
+  function pendingCallbackCount(calls) {
+    return pendingCallbackThreads(calls).length;
   }
 
   function currentWeekAttendance(start = state.reportStart) {
@@ -548,6 +602,7 @@
       const remotePayload = rows[0]?.payload || null;
       const merged = mergeCloudPayload(state.data, remotePayload);
       state.data = merged.data;
+      reconcileCompletedCallbacks();
       if (!persistLocalData() || !persistCloudTombstones()) {
         throw new Error("Could not save the merged data on this device.");
       }
@@ -646,7 +701,7 @@
   function renderOverview() {
     const selectedDay = state.overviewDay || today;
     const selectedCalls = state.data.calls.filter((call) => call.date === selectedDay);
-    const followUps = state.data.calls.filter((call) => /pending|callback/i.test(call.followUp || ""));
+    const followUps = pendingCallbackThreads(state.data.calls);
     const selectedAttendance = state.data.attendance.filter((entry) => entry.date === selectedDay);
     const selectedMeetings = state.data.meetings.filter((meeting) => meeting.date === selectedDay).sort((a, b) => a.startTime.localeCompare(b.startTime));
     const selectedDateLabel = formatDate(selectedDay, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -820,10 +875,6 @@
     return `<div class="report-controls"><label for="report-start">Week starting</label><input id="report-start" class="field-control" type="date" value="${escapeHtml(state.reportStart)}"></div>`;
   }
 
-  function reportWeekNotice() {
-    return `<div class="notice"><strong>${formatDate(state.reportStart)} – ${formatDate(addDays(state.reportStart, 6))}</strong> · Choose any date to view the week that contains it.</div>`;
-  }
-
   function reportWeekDates() {
     return Array.from({ length: 5 }, (_, index) => addDays(state.reportStart, index));
   }
@@ -844,40 +895,71 @@
   function renderCallReport() {
     const calls = currentWeekCalls();
     const incoming = calls.filter((call) => call.direction === "Incoming").length;
-    const outgoing = calls.length - incoming;
-    const succeeded = calls.filter((call) => /succeed/i.test(call.outcome)).length;
-    const pending = calls.filter((call) => /pending|callback/i.test(call.followUp || "")).length;
-    const unavailable = calls.filter((call) => /unavailable|unreachable|no answer/i.test(call.outcome)).length;
+    const outgoing = calls.filter((call) => call.direction === "Outgoing").length;
+    const succeeded = calls.filter(isSuccessfulCall).length;
+    const pending = pendingCallbackCount(calls);
+    const unavailable = calls.filter((call) => /unavailable|unreachable/i.test(call.outcome || "")).length;
     const days = Array.from({ length: 5 }, (_, index) => {
       const date = addDays(state.reportStart, index);
-      const count = calls.filter((call) => call.date === date).length;
-      return { date, count, label: formatDate(date, { weekday: "short" }) };
+      const dayCalls = calls.filter((call) => call.date === date);
+      const dayIncoming = dayCalls.filter((call) => call.direction === "Incoming").length;
+      const dayOutgoing = dayCalls.filter((call) => call.direction === "Outgoing").length;
+      return {
+        date,
+        incoming: dayIncoming,
+        outgoing: dayOutgoing,
+        total: dayIncoming + dayOutgoing,
+        label: formatDate(date, { weekday: "long" })
+      };
     });
-    const maxDay = Math.max(1, ...days.map((day) => day.count));
+    const busiest = Math.max(0, ...days.map((day) => day.total));
+    const busiestDays = busiest ? days.filter((day) => day.total === busiest).map((day) => day.label).join(", ") : "—";
+    const completionRate = calls.length ? Math.round(succeeded / calls.length * 100) : 0;
+    const otherOutcomes = calls.filter((call) =>
+      !isSuccessfulCall(call) &&
+      !isOpenCallback(call) &&
+      !/unavailable|unreachable/i.test(call.outcome || "")
+    ).length;
+    const narrative = calls.length
+      ? `${calls.length} calls were logged: ${incoming} incoming and ${outgoing} outgoing. ${succeeded} were succeeded or callback-completed, ${pending} callback thread${pending === 1 ? " remains" : "s remain"} pending, and ${unavailable} were unavailable or unreachable. ${busiest ? `${busiestDays} ${busiest === 1 ? "was" : "were"} busiest with ${busiest} call${busiest === 1 ? "" : "s"}.` : "There was no call activity on the five workdays."}`
+      : "No calls were logged during this Monday–Friday workweek.";
     return `
-      ${pageHeading("CALL ACTIVITY", "Weekly calls", "Review call outcomes and activity by day for the selected week.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-csv">Export calls CSV</button></div>`)}
-      ${reportWeekNotice()}
+      ${pageHeading("CALL ACTIVITY", "Weekly calls", "Workbook-style Monday–Friday call summary, callback status, and daily activity.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-csv">Export calls CSV</button></div>`)}
+      <section class="weekly-period">
+        <div class="weekly-period-summary">
+          <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
+          <div><span>Week End</span><strong>${formatDate(addDays(state.reportStart, 4))}</strong></div>
+          <div><span>Working days</span><strong>Monday – Friday · 5 days</strong></div>
+        </div>
+        <div class="workweek-dates">${days.map((day) => `<div class="workday-date"><span>${escapeHtml(day.label)}</span><strong>${formatDate(day.date)}</strong></div>`).join("")}</div>
+      </section>
       <section class="stats-grid">
-        ${statCard("Total calls", calls.length, `${incoming} incoming · ${outgoing} outgoing`, "↗")}
-        ${statCard("Succeeded", succeeded, calls.length ? `${Math.round(succeeded / calls.length * 100)}% of calls` : "No calls this week", "✓")}
-        ${statCard("Callbacks pending", pending, "Follow-ups still open", "↻")}
-        ${statCard("Unanswered", unavailable, "Unavailable, unreachable, or no answer", "×")}
+        ${statCard("Incoming Calls", incoming, "Received during the workweek", "↙")}
+        ${statCard("Outgoing Calls", outgoing, "Made during the workweek", "↗")}
+        ${statCard("Total Calls", calls.length, "Monday to Friday", "☎")}
+        ${statCard("Succeeded", succeeded, `${completionRate}% call completion rate`, "✓")}
+        ${statCard("Pending Callbacks", pending, "Distinct client and staff threads", "↻")}
+        ${statCard("Completion Rate", `${completionRate}%`, `${succeeded} succeeded or callback-completed`, "✓")}
+        ${statCard("Unavailable / Unreachable", unavailable, "Calls with these outcomes", "×")}
+        ${statCard("Busiest Day", busiestDays, busiest ? `${busiest} call${busiest === 1 ? "" : "s"}` : "No calls this week", "▦")}
       </section>
       <section class="report-grid">
-        <article class="panel"><header class="panel-header"><div><h2>Call outcomes</h2><p>${unavailable} unavailable, unreachable, or unanswered</p></div></header>
+        <article class="panel"><header class="panel-header"><div><h2>Outcome groups</h2><p>Callback completion is matched by client, staff, and call time.</p></div></header>
           <div class="metric-list">
-            <div class="metric-row"><span>Incoming calls</span><strong>${incoming}</strong></div>
-            <div class="metric-row"><span>Outgoing calls</span><strong>${outgoing}</strong></div>
-            <div class="metric-row"><span>Succeeded</span><strong>${succeeded}</strong></div>
-            <div class="metric-row"><span>Pending follow-ups</span><strong>${pending}</strong></div>
-            <div class="metric-row"><span>Completion rate</span><strong>${calls.length ? Math.round(succeeded / calls.length * 100) : 0}%</strong></div>
+            <div class="metric-row"><span>Succeeded / callback completed</span><strong>${succeeded}</strong></div>
+            <div class="metric-row"><span>Pending callback threads</span><strong>${pending}</strong></div>
+            <div class="metric-row"><span>Unavailable / unreachable</span><strong>${unavailable}</strong></div>
+            <div class="metric-row"><span>Other outcomes</span><strong>${otherOutcomes}</strong></div>
           </div>
         </article>
-        <article class="panel"><header class="panel-header"><div><h2>Calls by day</h2><p>Monday to Friday</p></div></header>
-          <div class="day-bars">${days.map((day) => `<div class="day-bar-row"><span>${day.label}</span><div class="progress-track"><div class="progress-fill" style="width:${Math.round(day.count / maxDay * 100)}%"></div></div><strong>${day.count}</strong></div>`).join("")}</div>
+        <article class="panel"><header class="panel-header"><div><h2>Weekly summary</h2><p>Incoming and outgoing activity by weekday</p></div></header>
+          <div class="table-wrap"><table class="weekly-calls-table"><thead><tr><th>Day</th><th>Incoming</th><th>Outgoing</th><th>Total</th></tr></thead><tbody>${days.map((day) => `<tr><td>${escapeHtml(day.label)}</td><td>${day.incoming}</td><td>${day.outgoing}</td><td><strong>${day.total}</strong></td></tr>`).join("")}<tr class="weekly-calls-total"><td>Week total</td><td>${incoming}</td><td>${outgoing}</td><td>${calls.length}</td></tr></tbody></table></div>
         </article>
       </section>
-      `;
+      <section class="panel section-spacer weekly-call-narrative"><header class="panel-header"><div><h2>Summary</h2><p>Weekly narrative</p></div></header><p>${escapeHtml(narrative)}</p></section>
+      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Calls made during the week</h2><p>${calls.length} incoming and outgoing call record${calls.length === 1 ? "" : "s"}</p></div></header>
+        <div class="table-wrap"><table><thead><tr><th>Date / time</th><th>Client / phone</th><th>Direction</th><th>Staff / outcome</th><th>Follow-up status</th><th>Call record / notes</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${callRows(sortedByNewest(calls))}</tbody></table></div>
+      </section>`;
   }
 
   function renderAttendanceReport() {
@@ -1048,7 +1130,7 @@
       ${field("Phone", "phone", existing?.phone || "", { type: "tel", placeholder: "Phone number" })}
       ${field(direction === "Incoming" ? "Staff requested" : "Staff requesting", "staff", existing?.staff || "", { list: "staff-list", placeholder: "Staff member's name" })}
       ${field("Outcome", "outcome", existing?.outcome || "Succeeded", { type: "select", options: ["Succeeded", "Engaged", "Callback Requested", "No Answer", "Unavailable", "Unreachable", "Voicemail", "Other"], required: true })}
-      ${field("Follow-up status", "followUp", existing?.followUp || "Not Required", { type: "select", options: ["Not Required", "Callback Pending", "In Progress", "Completed"] })}
+      ${field("Follow-up status", "followUp", existing?.followUp || "Not Required", { type: "select", options: ["Not Required", "Callback Pending", "In Progress", "Completed", "Callback Completed"] })}
       ${field("Call record", "record", existing?.record || "", { wide: true, placeholder: "Brief summary of the conversation" })}
       ${field("Notes", "notes", existing?.notes || "", { type: "textarea", wide: true, placeholder: "Additional details or next steps" })}
     </div>${datalists()}`;
@@ -1864,6 +1946,7 @@
     }
   });
 
+  if (!storageFault && reconcileCompletedCallbacks()) saveData();
   render();
   initializeCloudSync();
   window.addEventListener("online", () => syncCloudData().catch(() => {}));

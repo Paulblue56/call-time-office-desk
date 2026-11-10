@@ -23,4 +23,4 @@ The cloud integration uses Supabase Auth and its REST API directly; no server cr
 
 ## Weekly reports
 
-Weekly calls and weekly attendance have separate tabs. Weekly attendance covers Monday through Friday, shows the 40-hour target and staff variance, and includes the daily attendance list for each of the five workdays.
+Weekly calls and weekly attendance have separate tabs. Both reports use Monday through Friday. Weekly calls includes incoming/outgoing totals by day, outcome and completion metrics, a busiest-day summary, and the week's call register. When a later successful call matches an open callback by client and staff, the earlier call is saved as **Callback Completed** and is removed from the open follow-up queue; this applies across week boundaries. Weekly attendance shows the 40-hour target and staff variance and includes the daily attendance list for each workday.
