@@ -37,6 +37,7 @@
   let cloudSyncPromise;
   let cloudTombstones = loadCloudTombstones();
   let authCallback = readAuthCallback();
+  let deferredInstallPrompt;
 
   const content = document.querySelector("#content");
   const modalRoot = document.querySelector("#modal-root");
@@ -278,8 +279,7 @@
   }
 
   function isSuccessfulCall(call) {
-    return /succeed|success/i.test(call.outcome || "") ||
-      /^(callback completed|completed)$/i.test((call.followUp || "").trim());
+    return /succeed|success/i.test(call.outcome || "");
   }
 
   function callTimestamp(call) {
@@ -332,6 +332,58 @@
     element.textContent = message;
     region.append(element);
     window.setTimeout(() => element.remove(), 3200);
+  }
+
+  function isInstalledApp() {
+    return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  }
+
+  function setupAppInstallation() {
+    const installButton = document.querySelector("#install-app");
+    if (!installButton) return;
+    installButton.hidden = isInstalledApp();
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      installButton.hidden = false;
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredInstallPrompt = undefined;
+      installButton.hidden = true;
+      toast("Call & Time was installed on this device.");
+    });
+  }
+
+  async function installApp() {
+    if (deferredInstallPrompt) {
+      const promptEvent = deferredInstallPrompt;
+      deferredInstallPrompt = undefined;
+      try {
+        await promptEvent.prompt();
+        const { outcome } = await promptEvent.userChoice;
+        if (outcome === "accepted") document.querySelector("#install-app").hidden = true;
+      } catch (error) {
+        console.error("Could not open the app installation prompt.", error);
+        toast("Could not open the installation prompt. Use your browser menu to install this app.");
+      }
+      return;
+    }
+
+    const isAppleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (isAppleMobile) {
+      toast("To install: open this page in Safari, tap Share, then choose Add to Home Screen.");
+    } else if (/Android/i.test(navigator.userAgent)) {
+      toast("To install: open your browser menu and choose Install app or Add to Home screen.");
+    } else {
+      toast("To install: use the Install app option in your browser's address bar or menu.");
+    }
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator) || !["https:", "http:"].includes(window.location.protocol)) return;
+    navigator.serviceWorker.register(new URL("./sw.js", window.location.href))
+      .catch((error) => console.error("Could not register the offline app shell.", error));
   }
 
   function badge(text) {
@@ -1875,6 +1927,7 @@
     else if (name === "add-work-staff") addWorkDirectoryStaff(recordId);
     else if (name === "delete-directory") deleteAction(kind === "client" ? "clients" : "staff", recordId, kind);
     else if (name === "close-modal") closeModal();
+    else if (name === "install-app") installApp();
     else if (name === "backup") exportBackup();
     else if (name === "merge-backup") document.querySelector("#merge-file").click();
     else if (name === "cloud-connect") {
@@ -1947,6 +2000,8 @@
   });
 
   if (!storageFault && reconcileCompletedCallbacks()) saveData();
+  setupAppInstallation();
+  registerServiceWorker();
   render();
   initializeCloudSync();
   window.addEventListener("online", () => syncCloudData().catch(() => {}));

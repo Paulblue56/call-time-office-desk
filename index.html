@@ -4,7 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#211b3c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Call & Time">
     <title>Call & Time | Office desk</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./assets/app-icon-192.png">
     <link rel="stylesheet" href="styles.css">
     <meta name="referrer" content="no-referrer">
     <script src="app.js" defer></script>
@@ -45,6 +50,7 @@
           <div class="breadcrumb"><span>Workspace</span><span class="crumb-divider">/</span><strong id="current-section">Overview</strong></div>
           <div class="topbar-right">
             <span class="today-label" id="today-label"></span>
+            <button class="btn btn-secondary btn-small install-app-button" id="install-app" type="button" data-action="install-app" hidden>Install app</button>
             <span class="user-avatar" aria-hidden="true">O</span>
           </div>
         </header>

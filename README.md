@@ -24,3 +24,13 @@ The cloud integration uses Supabase Auth and its REST API directly; no server cr
 ## Weekly reports
 
 Weekly calls and weekly attendance have separate tabs. Both reports use Monday through Friday. Weekly calls includes incoming/outgoing totals by day, outcome and completion metrics, a busiest-day summary, and the week's call register. When a later successful call matches an open callback by client and staff, the earlier call is saved as **Callback Completed** and is removed from the open follow-up queue; this applies across week boundaries. Weekly attendance shows the 40-hour target and staff variance and includes the daily attendance list for each workday.
+
+## Install Call & Time on desktop or phone
+
+Call & Time is an installable Progressive Web App (PWA); it uses the same website, account, and Supabase cloud sync rather than separate native apps.
+
+- **Windows / desktop:** Open the website in Microsoft Edge or Google Chrome and select **Install app** (or the install icon in the address bar/browser menu).
+- **Android:** Open the website in Chrome, tap **Install app** or **Add to Home screen** when offered. The in-app **Install app** button also explains where to find the browser option.
+- **iPhone / iPad:** Open the website in Safari, tap **Share**, then **Add to Home Screen**. Open it from the new Home Screen icon.
+
+Open the website online once so the app shell is installed and cached. Afterwards, the interface and records saved on that device can still be used offline. Cloud sync and Microsoft 365 directory search need an internet connection. Each device/browser stores its own local copy; sign in to the same cloud account on every device to sync and share records. The offline cache contains the app files, not call or client records. Changes made offline sync when the connection is restored.
