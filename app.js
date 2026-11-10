@@ -827,7 +827,7 @@
   function attendanceHours(entry) {
     const status = (entry.status || "").toLowerCase();
     const mode = (entry.workMode || "").toLowerCase();
-    if (/leave|sick/.test(status) || /client|direct|remote|home/.test(mode)) return 8;
+    if (/present|leave|sick/.test(status) || /client|direct|remote|home/.test(mode)) return 8;
     if (entry.timeIn && entry.timeOut) {
       const [inHour, inMinute] = entry.timeIn.split(":").map(Number);
       const [outHour, outMinute] = entry.timeOut.split(":").map(Number);
@@ -862,11 +862,11 @@
       <div class="filter-bar"><div class="filter-group"><label for="attendance-day" class="field-hint">Showing entries for</label><input id="attendance-day" class="field-control" type="date" value="${escapeHtml(state.attendanceDay)}"></div><span class="badge">${entries.length} staff entries</span></div>
       <section class="stats-grid">
         ${statCard("Present / partial", present, `For ${formatDate(state.attendanceDay)}`, "◷")}
-        ${statCard("Hours worked", formatHours(hours), "Based on logged times and work mode", "⌛")}
+        ${statCard("Hours worked", formatHours(hours), "Full Present, leave, and sick days count as 8 hours", "⌛")}
         ${statCard("On leave / sick", entries.filter((entry) => /leave|sick/i.test(entry.status)).length, "Leave and sick leave", "＋")}
         ${statCard("Client work", entries.filter((entry) => /client/i.test(entry.workMode || "") || entry.location).length, "Entries with client work or location", "⌖")}
       </section>
-      <section class="table-card"><header class="table-card-header"><div><h2>Staff attendance</h2><p>Hours are calculated from start and end times (minus a one-hour break).</p></div></header><div class="table-wrap"><table>
+      <section class="table-card"><header class="table-card-header"><div><h2>Staff attendance</h2><p>Full Present, leave, and sick days count as 8 hours. Partial shifts use recorded times minus a one-hour lunch break.</p></div></header><div class="table-wrap"><table>
         <thead><tr><th>Staff / work mode</th><th>Status</th><th>Time in / out</th><th>Hours</th><th>Client / location</th><th>Expected</th><th>Notes</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>${attendanceRows(entries)}</tbody>
       </table></div></section>`;
@@ -1033,7 +1033,7 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Approved leave and sick leave count as 8 hours toward weekly totals and variance.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Five working days, Monday to Friday. Full Present days and approved leave or sick leave count as 8 hours toward weekly totals and variance.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1213,7 +1213,7 @@
       ${field("Client / location", "location", existing?.location || "", { placeholder: "Client visit, office, or location" })}
       ${field("Expected hours", "expectedHours", existing?.expectedHours ?? 8, { type: "number", step: "0.25", required: true })}
       ${field("Notes", "notes", existing?.notes || "", { type: "textarea", wide: true, placeholder: "Optional attendance notes" })}
-    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">Worked hours follow the workbook logic: timed shifts deduct a one-hour break; remote, client, leave, and sick entries count as 8 hours.</p>`;
+    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">A full Present day, approved leave, and sick leave count as 8 hours. For a Partial shift, entered times are used and a one-hour lunch break is deducted. Flexible full-day shifts of 07:00–16:00, 08:00–17:00, or 09:00–18:00 each represent 8 work hours.</p>`;
     openModal(existing ? "Edit attendance" : "Add attendance", "Record one staff member's attendance for a day.", "attendance", body, existing ? "Save changes" : "Save attendance", recordId);
   }
 
