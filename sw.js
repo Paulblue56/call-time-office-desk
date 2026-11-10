@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "call-time-app-shell-v2";
+const CACHE_NAME = "call-time-app-shell-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -57,12 +57,16 @@ self.addEventListener("fetch", (event) => {
   if (!isAppShellAsset) return;
   event.respondWith((async () => {
     const cached = await caches.match(request);
-    if (cached) return cached;
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, response.clone());
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    } catch (error) {
+      if (cached) return cached;
+      throw error;
     }
-    return response;
   })());
 });
