@@ -1063,7 +1063,7 @@
         <div class="weekly-total"><span>Variance Hours</span><strong>${formatHours(variance)}</strong></div>
         <div class="weekly-total"><span>Coverage</span><strong>${coverage}%</strong></div>
       </section>
-      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays. Leave, sick leave, and public holidays count as 8 hours.</p></div></header>
+      <section class="table-card weekly-attendance-summary section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays. Leave, sick leave, and public holidays count as 8 hours.</p></div></header>
         ${attendanceReportTable(summary)}
       </section>
       <section class="daily-attendance-list section-spacer" aria-label="Daily attendance for the selected workweek">
@@ -1651,29 +1651,14 @@
   }
 
   function downloadAttendanceReport() {
-    const report = document.querySelector("#content");
     const originalTitle = document.title;
     const cleanup = () => {
       document.body.classList.remove("printing-attendance-report");
-      report.style.zoom = "";
       document.title = originalTitle;
-    };
-    const fitReportToPage = () => {
-      const pageWidth = 297 * 96 / 25.4;
-      const pageHeight = 210 * 96 / 25.4;
-      const availableWidth = pageWidth - 8;
-      const availableHeight = pageHeight - 8;
-      const scale = Math.min(
-        1,
-        availableWidth / report.scrollWidth,
-        availableHeight / report.scrollHeight
-      );
-      report.style.zoom = String(scale);
     };
 
     document.body.classList.add("printing-attendance-report");
     document.title = `Call-Time-Attendance-${state.reportStart}`;
-    window.addEventListener("beforeprint", fitReportToPage, { once: true });
     window.addEventListener("afterprint", cleanup, { once: true });
     window.print();
   }
