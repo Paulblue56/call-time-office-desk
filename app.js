@@ -1089,7 +1089,7 @@
         if (kinds.includes("leave")) leaveDays += 1;
         if (kinds.includes("sick")) sickDays += 1;
         dayEntries.forEach((entry) => {
-          workedHours += weeklyWorkedHours(entry);
+          if (attendanceDayKind(entry) === "present") workedHours += attendanceHours(entry);
         });
         if (!worked) return;
         let clientWork = false;
