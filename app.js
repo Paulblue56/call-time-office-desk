@@ -1126,7 +1126,7 @@
       }
 
       return {
-        name: escapeHtml(name),
+        name,
         presentDays,
         leaveDays,
         sickDays,
