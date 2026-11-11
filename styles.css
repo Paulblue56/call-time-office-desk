@@ -286,17 +286,22 @@ td strong { color: #3d3657; font-weight: 600; }
     min-height: 23mm;
   }
   body.printing-attendance-report .attendance-report-heading > div {
-    max-width: 38%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 46%;
+    max-width: 46%;
+    transform: translate(-50%, -50%);
   }
   body.printing-attendance-report .attendance-report-logo {
     display: block;
     position: absolute;
     top: 50%;
-    left: 50%;
+    left: 0;
     height: 22mm;
     width: auto;
     object-fit: contain;
-    transform: translate(-50%, -50%);
+    transform: translateY(-50%);
   }
   body.printing-attendance-report .page-heading p,
   body.printing-attendance-report .eyebrow {
