@@ -828,6 +828,7 @@
     const status = (entry.status || "").toLowerCase();
     const mode = (entry.workMode || "").toLowerCase();
     if (/leave|sick/.test(status)) return 8;
+    if (isPublicHoliday(entry)) return 8;
     if (/client|direct|remote|home/.test(mode)) return 8;
     const presentInOffice = /present/.test(status) && /office/.test(mode);
     if (!presentInOffice && /present/.test(status)) return 8;
@@ -844,7 +845,7 @@
   function attendanceRows(entries) {
     if (!entries.length) return `<tr><td class="table-empty" colspan="8">No attendance entries for this date.</td></tr>`;
     return entries.map((entry) => `<tr>
-      <td><div class="table-primary">${escapeHtml(entry.staff)}</div><div class="table-secondary">${escapeHtml(entry.workMode || "—")}</div></td>
+      <td><div class="table-primary">${escapeHtml(entry.staff)}</div><div class="table-secondary">${escapeHtml(attendanceWorkMode(entry))}</div></td>
       <td>${badge(entry.status)}</td>
       <td>${formatTime(entry.timeIn)}${entry.timeOut ? ` – ${formatTime(entry.timeOut)}` : ""}</td>
       <td><strong>${formatHours(attendanceHours(entry))}</strong></td>
@@ -859,7 +860,7 @@
     const entries = state.data.attendance.filter((entry) => entry.date === state.attendanceDay)
       .sort((a, b) => a.staff.localeCompare(b.staff));
     const hours = entries.reduce((sum, entry) => sum + attendanceHours(entry), 0);
-    const present = entries.filter((entry) => /present|partial/i.test(entry.status)).length;
+    const present = entries.filter((entry) => attendanceDayKind(entry) === "present").length;
     return `
       ${pageHeading("DAILY REGISTER", "Attendance", "Capture staff presence, work mode, time, and client visits.", `<button class="btn btn-primary" type="button" data-action="new-attendance"><span>＋</span> Add attendance</button>`)}
       <div class="filter-bar"><div class="filter-group"><label for="attendance-day" class="field-hint">Showing entries for</label><input id="attendance-day" class="field-control" type="date" value="${escapeHtml(state.attendanceDay)}"></div><span class="badge">${entries.length} staff entries</span></div>
@@ -942,14 +943,24 @@
     const status = (entry.status || "").toLowerCase();
     if (/sick/.test(status)) return "sick";
     if (/leave/.test(status)) return "leave";
+    if (isPublicHoliday(entry)) return "public-holiday";
     if (/absent/.test(status)) return "absent";
     if (/present|partial/.test(status)) return "present";
     return "other";
   }
 
+  function isPublicHoliday(entry) {
+    return /public\s+holiday/i.test(entry.workMode || "");
+  }
+
+  function attendanceWorkMode(entry) {
+    const kind = attendanceDayKind(entry);
+    return ["leave", "sick", "public-holiday"].includes(kind) ? "—" : entry.workMode || "—";
+  }
+
   function weeklyWorkedHours(entry) {
     const kind = attendanceDayKind(entry);
-    if (kind === "leave" || kind === "sick") return 8;
+    if (kind === "leave" || kind === "sick" || kind === "public-holiday") return 8;
     return kind === "present" ? attendanceHours(entry) : 0;
   }
 
@@ -1036,7 +1047,7 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday attendance totals, work hours, and approved leave or sick hours.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday attendance totals, work hours, approved leave, sick leave, and public holidays.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1051,7 +1062,7 @@
         <div class="weekly-total"><span>Variance Hours</span><strong>${formatHours(variance)}</strong></div>
         <div class="weekly-total"><span>Coverage</span><strong>${coverage}%</strong></div>
       </section>
-      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays.</p></div></header>
+      <section class="table-card section-spacer"><header class="table-card-header"><div><h2>Weekly staff summary</h2><p>Each staff member has a 40-hour target across five workdays. Leave, sick leave, and public holidays count as 8 hours.</p></div></header>
         ${attendanceReportTable(summary)}
       </section>
       <section class="daily-attendance-list section-spacer" aria-label="Daily attendance for the selected workweek">
@@ -1079,6 +1090,7 @@
       let presentDays = 0;
       let leaveDays = 0;
       let sickDays = 0;
+      let publicHolidayDays = 0;
       let clientDays = 0;
       let officeDays = 0;
       let workedHours = 0;
@@ -1088,6 +1100,7 @@
         if (worked) presentDays += 1;
         if (kinds.includes("leave")) leaveDays += 1;
         if (kinds.includes("sick")) sickDays += 1;
+        if (kinds.includes("public-holiday")) publicHolidayDays += 1;
         dayEntries.forEach((entry) => {
           if (attendanceDayKind(entry) === "present") workedHours += attendanceHours(entry);
         });
@@ -1105,9 +1118,10 @@
       const WEEKLY_TARGET_HOURS = 40;
       const leaveHours = leaveDays * 8;
       const sickHours = sickDays * 8;
+      const publicHolidayHours = publicHolidayDays * 8;
 
       const workedHoursRounded = Math.round(workedHours * 100) / 100;
-      const totalHours = Math.round((workedHoursRounded + leaveHours + sickHours) * 100) / 100;
+      const totalHours = Math.round((workedHoursRounded + leaveHours + sickHours + publicHolidayHours) * 100) / 100;
 
       const variance = Math.round((totalHours - WEEKLY_TARGET_HOURS) * 100) / 100;
 
@@ -1130,6 +1144,7 @@
         presentDays,
         leaveDays,
         sickDays,
+        publicHolidayDays,
         clientDays,
         officeDays,
         hoursWorked: workedHoursRounded,
@@ -1153,6 +1168,7 @@
 <th>Present Days</th>
 <th>Leave Days</th>
 <th>Sick Days</th>
+<th>Public Holidays</th>
 <th>Client Days</th>
 <th>Office Days</th>
 <th>Hours Worked</th>
@@ -1168,6 +1184,7 @@
 <td>${row.presentDays}</td>
 <td>${row.leaveDays}</td>
 <td>${row.sickDays}</td>
+<td>${row.publicHolidayDays}</td>
 <td>${row.clientDays}</td>
 <td>${row.officeDays}</td>
 
@@ -1198,7 +1215,7 @@
       <div class="table-wrap"><table><thead><tr><th>Staff Name</th><th>Status</th><th>Work Mode</th><th>Hours Worked</th><th>Time In / Out</th><th>Client / Location</th><th>Notes</th></tr></thead><tbody>${sorted.length ? sorted.map((entry) => `<tr>
         <td><strong>${escapeHtml(entry.staff)}</strong></td>
         <td>${badge(entry.status)}</td>
-        <td>${escapeHtml(entry.workMode || "—")}</td>
+        <td>${escapeHtml(attendanceWorkMode(entry))}</td>
         <td>${formatHours(weeklyWorkedHours(entry))}</td>
         <td>${formatTime(entry.timeIn)}${entry.timeOut ? ` – ${formatTime(entry.timeOut)}` : ""}</td>
         <td>${escapeHtml(entry.location || "—")}</td>
@@ -1280,13 +1297,13 @@
       ${field("Staff name", "staff", existing?.staff || "", { required: true, list: "staff-list", placeholder: "Enter staff name" })}
       ${field("Date", "date", existing?.date || state.attendanceDay, { type: "date", required: true })}
       ${field("Status", "status", existing?.status || "Present", { type: "select", options: ["Present", "Partial", "Leave", "Sick Leave", "Absent"], required: true })}
-      ${field("Work mode", "workMode", existing?.workMode || "Office", { type: "select", options: ["Office", "Client Direct", "Office -> Client", "Remote", "Other"] })}
+      ${field("Work mode", "workMode", existing?.workMode || "Office", { type: "select", options: ["Office", "Client Direct", "Office -> Client", "Remote", "Other", "Public Holiday"] })}
       ${field("Time in", "timeIn", existing?.timeIn || "", { type: "time" })}
       ${field("Time out", "timeOut", existing?.timeOut || "", { type: "time" })}
       ${field("Client / location", "location", existing?.location || "", { placeholder: "Client visit, office, or location" })}
       ${field("Expected hours", "expectedHours", existing?.expectedHours ?? 8, { type: "number", step: "0.25", required: true })}
       ${field("Notes", "notes", existing?.notes || "", { type: "textarea", wide: true, placeholder: "Optional attendance notes" })}
-    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">For office shifts, enter start and end times; hours are calculated from the recorded interval less the one-hour lunch break. If those times are missing, only manually recorded hours are counted. Approved leave and sick leave count as 8 hours; remote, client-direct, and office-to-client days count as 8 hours. Partial office shifts use recorded times less lunch.</p>`;
+    </div>${datalists()}<p class="field-hint" style="margin:14px 0 0">For office shifts, enter start and end times; hours are calculated from the recorded interval less the one-hour lunch break. If those times are missing, only manually recorded hours are counted. Approved leave, sick leave, and public holidays count as 8 hours; remote, client-direct, and office-to-client days count as 8 hours. Partial office shifts use recorded times less lunch.</p>`;
     openModal(existing ? "Edit attendance" : "Add attendance", "Record one staff member's attendance for a day.", "attendance", body, existing ? "Save changes" : "Save attendance", recordId);
   }
 
