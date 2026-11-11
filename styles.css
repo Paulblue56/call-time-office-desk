@@ -197,6 +197,8 @@ td strong { color: #3d3657; font-weight: 600; }
 .weekly-total:last-child { border-right: 0; }
 .weekly-total strong { color: #194b23; font-size: 13px; white-space: nowrap; }
 .content.attendance-report-content { max-width: none; padding-right: 24px; padding-left: 24px; }
+.attendance-report-heading { display: flex; align-items: center; gap: 12px; }
+.attendance-report-logo { display: none; }
 .weekly-attendance-table { width: 100%; min-width: 0; table-layout: fixed; }
 .weekly-attendance-table th {
   width: 5.846%; padding: 9px 5px; color: #4a4650; background: #efedf0;
@@ -276,6 +278,13 @@ td strong { color: #3d3657; font-weight: 600; }
   body.printing-attendance-report .page-heading h1 {
     margin-bottom: 5px;
     font-size: 24px;
+  }
+  body.printing-attendance-report .attendance-report-logo {
+    display: block;
+    flex: 0 0 auto;
+    height: 14mm;
+    width: auto;
+    object-fit: contain;
   }
   body.printing-attendance-report .page-heading p,
   body.printing-attendance-report .eyebrow {

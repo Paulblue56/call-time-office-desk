@@ -1,11 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "call-time-app-shell-v17";
+const CACHE_NAME = "call-time-app-shell-v18";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
-  "./app.js?v=17",
+  "./app.js?v=18",
+  "./assets/grant-thornton-logo.png",
   "./manifest.webmanifest",
   "./assets/call-time-logo.png",
   "./assets/workspace-background.png",

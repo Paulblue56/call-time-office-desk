@@ -1048,7 +1048,13 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday attendance totals, work hours, approved leave, sick leave, and public holidays.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" title="Choose Save as PDF in the print dialog" data-action="download-attendance-report">Download attendance report</button></div>`)}
+      <div class="page-heading">
+        <div class="attendance-report-heading">
+          <img class="attendance-report-logo" src="./assets/grant-thornton-logo.png" alt="Grant Thornton">
+          <div><div class="eyebrow">STAFF ACTIVITY</div><h1>Weekly attendance</h1><p>Monday–Friday attendance totals, work hours, approved leave, sick leave, and public holidays.</p></div>
+        </div>
+        <div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" title="Choose Save as PDF in the print dialog" data-action="download-attendance-report">Download attendance report</button></div>
+      </div>
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1650,7 +1656,25 @@
     toast("Weekly calls CSV downloaded.");
   }
 
-  function downloadAttendanceReport() {
+  async function downloadAttendanceReport() {
+    const logo = content.querySelector(".attendance-report-logo");
+    if (!(logo instanceof HTMLImageElement)) {
+      toast("The attendance report logo is missing. Refresh the page before downloading.");
+      return;
+    }
+
+    const logoLoaded = logo.complete
+      ? logo.naturalWidth > 0
+      : await new Promise((resolve) => {
+          logo.addEventListener("load", () => resolve(true), { once: true });
+          logo.addEventListener("error", () => resolve(false), { once: true });
+        });
+    if (!logoLoaded) {
+      console.error("Could not load the Grant Thornton logo for the attendance report.", logo.currentSrc);
+      toast("The Grant Thornton logo could not be loaded; the report was not printed.");
+      return;
+    }
+
     const originalTitle = document.title;
     const cleanup = () => {
       document.body.classList.remove("printing-attendance-report");
