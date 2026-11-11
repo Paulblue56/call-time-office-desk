@@ -33,7 +33,7 @@ To enable Gemini:
 4. Deploy the function: `supabase functions deploy gemini-assistant`.
 5. Publish the static website files using the GitHub Pages workflow. The assistant will report a configuration or sign-in error if the function or secret is missing.
 
-The function validates the signed-in Supabase user, keeps the Gemini key server-side, limits prompts to 2,000 characters, and accepts only constrained JSON actions. It never allows Gemini to write records directly.
+The function validates the signed-in Supabase user, keeps the Gemini key server-side, limits prompts to 2,000 characters, and accepts only constrained JSON actions. It never allows Gemini to write records directly. If the configured model times out or is rate-limited or unavailable, the function makes one bounded attempt with `gemini-3.5-flash-lite`.
 
 ## Weekly reports
 

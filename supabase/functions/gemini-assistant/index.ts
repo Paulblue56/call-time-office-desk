@@ -153,21 +153,47 @@ Deno.serve(async (request) => {
   ].join(" ");
 
   try {
-    const geminiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
-        model: Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash",
-        store: false,
-        input: `${systemInstructions}\n\nUser request:\n${prompt.trim()}`,
-        response_format: { type: "text", mime_type: "application/json", schema: responseSchema }
-      }),
-      signal: AbortSignal.timeout(25000)
-    });
-    if (!geminiResponse.ok) {
+    const primaryModel = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const fallbackModel = "gemini-3.5-flash-lite";
+    const models = primaryModel === fallbackModel ? [primaryModel] : [primaryModel, fallbackModel];
+    let geminiResponse: Response | null = null;
+
+    for (const [index, model] of models.entries()) {
+      try {
+        geminiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({
+            model,
+            store: false,
+            input: `${systemInstructions}\n\nUser request:\n${prompt.trim()}`,
+            response_format: { type: "text", mime_type: "application/json", schema: responseSchema }
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+      } catch (error) {
+        const primaryTimedOut = index === 0 && models.length > 1 &&
+          error instanceof DOMException && error.name === "TimeoutError";
+        if (!primaryTimedOut) throw error;
+        console.warn("Primary Gemini model timed out; retrying with the fallback model.");
+        continue;
+      }
+
+      if (geminiResponse.ok) break;
+      const shouldUseFallback = index === 0 && models.length > 1 &&
+        [429, 503].includes(geminiResponse.status);
+      if (shouldUseFallback) {
+        console.warn("Primary Gemini model is temporarily unavailable; retrying with the fallback model.", geminiResponse.status);
+        continue;
+      }
       console.error("Gemini request failed with status", geminiResponse.status);
-      return jsonResponse({ error: "Gemini could not process that message. Try again shortly." }, 502);
+      return jsonResponse({ error: "Gemini is temporarily unavailable. Please try again shortly." }, 502);
     }
+
+    if (!geminiResponse?.ok) {
+      return jsonResponse({ error: "Gemini is temporarily unavailable. Please try again shortly." }, 502);
+    }
+
     const interaction = await geminiResponse.json();
     if (typeof interaction.output_text !== "string") {
       console.error("Gemini returned no structured assistant text.");
