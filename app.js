@@ -1032,7 +1032,7 @@
     const dates = reportWeekDates();
     const summary = weeklyAttendanceSummary(attendance);
     const targetHours = summary.length * 40;
-    const hours = summary.reduce((sum, row) => sum + row.hours, 0);
+    const hours = summary.reduce((sum, row) => sum + row.totalHours, 0);
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
@@ -1102,25 +1102,92 @@
         if (clientWork) clientDays += 1;
         else if (officeWork) officeDays += 1;
       });
-      const variance = workedHours - 40;
-      const flags = variance < 0 ? "Below target" : variance > 0 ? "Above target" : "On target";
-      return { name, presentDays, hours: workedHours, targetHours: 40, variance, leaveDays, sickDays, clientDays, officeDays, flags };
+      const WEEKLY_TARGET_HOURS = 40;
+      const leaveHours = leaveDays * 8;
+      const sickHours = sickDays * 8;
+
+      const workedHoursRounded = Math.round(workedHours * 100) / 100;
+      const totalHours = Math.round((workedHoursRounded + leaveHours + sickHours) * 100) / 100;
+
+      const variance = Math.round((totalHours - WEEKLY_TARGET_HOURS) * 100) / 100;
+
+      let flags = "On Target";
+      let flagClass = "";
+      let varianceSign = "";
+
+      if (variance < -0.005) {
+        flags = "Below Target";
+        flagClass = "attendance-flag-below";
+        varianceSign = "−";
+      } else if (variance > 0.005) {
+        flags = "Above Target";
+        flagClass = "attendance-flag-above";
+        varianceSign = "+";
+      }
+
+      return {
+        name: escapeHtml(name),
+        presentDays,
+        leaveDays,
+        sickDays,
+        clientDays,
+        officeDays,
+        hoursWorked: workedHoursRounded,
+        leaveHours,
+        sickHours,
+        totalHours,
+        targetHours: WEEKLY_TARGET_HOURS,
+        variance,
+        flags,
+        flagClass,
+        varianceSign
+      };
     });
   }
 
   function attendanceReportTable(rows) {
     if (!rows.length) return emptyState("No staff in the directory", "Add staff or attendance entries to build the weekly summary.");
-    return `<div class="table-wrap"><table class="weekly-attendance-table"><thead><tr><th>Staff Name</th><th>Present Days</th><th>Hours Worked</th><th>Target Hours</th><th>Variance Hours</th><th>Leave Days</th><th>Sick Days</th><th>Client Days</th><th>Office Days</th><th>Flags</th></tr></thead><tbody>${rows.map((row) => `<tr>
+    return `<div class="table-wrap"><table class="weekly-attendance-table"><thead>
+<tr>
+<th>Staff Name</th>
+<th>Present Days</th>
+<th>Leave Days</th>
+<th>Sick Days</th>
+<th>Client Days</th>
+<th>Office Days</th>
+<th>Hours Worked</th>
+<th>Leave Hours</th>
+<th>Sick Hours</th>
+<th>Total Hours</th>
+<th>Target Hours</th>
+<th>Variance Hours</th>
+<th>Flags</th>
+</tr>
+</thead><tbody>${rows.map((row) => `<tr>
       <td><strong>${escapeHtml(row.name)}</strong></td>
-      <td>${row.presentDays}</td>
-      <td>${formatHours(row.hours)}</td>
-      <td>${formatHours(row.targetHours)}</td>
-      <td class="${row.variance < 0 ? "variance-negative" : row.variance > 0 ? "variance-positive" : ""}">${formatHours(row.variance)}</td>
-      <td>${row.leaveDays}</td>
-      <td>${row.sickDays}</td>
-      <td>${row.clientDays}</td>
-      <td>${row.officeDays}</td>
-      <td><span class="attendance-flag${row.variance < 0 ? " attendance-flag-below" : row.variance > 0 ? " attendance-flag-above" : ""}">${row.flags}</span></td>
+<td>${row.presentDays}</td>
+<td>${row.leaveDays}</td>
+<td>${row.sickDays}</td>
+<td>${row.clientDays}</td>
+<td>${row.officeDays}</td>
+
+<td>${formatHours(row.hoursWorked)}</td>
+<td>${formatHours(row.leaveHours)}</td>
+<td>${formatHours(row.sickHours)}</td>
+
+<td><strong>${formatHours(row.totalHours)}</strong></td>
+
+<td>${formatHours(row.targetHours)}</td>
+
+<td class="${row.variance < 0 ? 'variance-negative' : row.variance > 0 ? 'variance-positive' : ''}">
+  ${row.varianceSign}${formatHours(Math.abs(row.variance))}
+</td>
+
+<td>
+  <span class="attendance-flag ${row.flagClass}">
+    ${row.flags}
+  </span>
+</td>
     </tr>`).join("")}</tbody></table></div>`;
   }
 
