@@ -1145,6 +1145,7 @@
         leaveDays,
         sickDays,
         publicHolidayDays,
+        publicHolidayHours,
         clientDays,
         officeDays,
         hoursWorked: workedHoursRounded,
@@ -1169,6 +1170,7 @@
 <th>Leave Days</th>
 <th>Sick Days</th>
 <th>Public Holidays</th>
+<th>Public Holiday Hours</th>
 <th>Client Days</th>
 <th>Office Days</th>
 <th>Hours Worked</th>
@@ -1185,6 +1187,7 @@
 <td>${row.leaveDays}</td>
 <td>${row.sickDays}</td>
 <td>${row.publicHolidayDays}</td>
+<td>${formatHours(row.publicHolidayHours)}</td>
 <td>${row.clientDays}</td>
 <td>${row.officeDays}</td>
 
