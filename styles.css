@@ -201,7 +201,7 @@ td strong { color: #3d3657; font-weight: 600; }
 .attendance-report-logo { display: none; }
 .weekly-attendance-table { width: 100%; min-width: 0; table-layout: fixed; }
 .weekly-attendance-table th {
-  width: 5.846%; padding: 9px 5px; color: #4a4650; background: #efedf0;
+  width: 5.4286%; padding: 9px 5px; color: #4a4650; background: #efedf0;
   text-align: center; white-space: normal; overflow-wrap: anywhere; line-height: 1.15;
 }
 .weekly-attendance-table th:first-child { width: 14%; }

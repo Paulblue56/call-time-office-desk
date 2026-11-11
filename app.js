@@ -1098,6 +1098,7 @@
       let leaveDays = 0;
       let sickDays = 0;
       let publicHolidayDays = 0;
+      let remoteDays = 0;
       let clientDays = 0;
       let officeDays = 0;
       let workedHours = 0;
@@ -1112,13 +1113,16 @@
           if (attendanceDayKind(entry) === "present") workedHours += attendanceHours(entry);
         });
         if (!worked) return;
+        let remoteWork = false;
         let clientWork = false;
         let officeWork = false;
         dayEntries.forEach((entry) => {
           const mode = (entry.workMode || "").toLowerCase();
-          if (/client|direct/.test(mode) || (/other/.test(mode) && entry.location)) clientWork = true;
+          if (/remote|home/.test(mode)) remoteWork = true;
+          else if (/client|direct/.test(mode) || (/other/.test(mode) && entry.location)) clientWork = true;
           else if (/office/.test(mode)) officeWork = true;
         });
+        if (remoteWork) remoteDays += 1;
         if (clientWork) clientDays += 1;
         else if (officeWork) officeDays += 1;
       });
@@ -1152,6 +1156,7 @@
         leaveDays,
         sickDays,
         publicHolidayDays,
+        remoteDays,
         publicHolidayHours,
         clientDays,
         officeDays,
@@ -1177,6 +1182,7 @@
 <th>Leave Days</th>
 <th>Sick Days</th>
 <th>Public Holidays</th>
+<th>Remote Days</th>
 <th>Client Days</th>
 <th>Office Days</th>
 <th>Hours Worked</th>
@@ -1194,6 +1200,7 @@
 <td>${row.leaveDays}</td>
 <td>${row.sickDays}</td>
 <td>${row.publicHolidayDays}</td>
+<td>${row.remoteDays}</td>
 <td>${row.clientDays}</td>
 <td>${row.officeDays}</td>
 
