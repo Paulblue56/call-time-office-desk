@@ -196,9 +196,17 @@ td strong { color: #3d3657; font-weight: 600; }
 .weekly-total { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 15px; border-right: 1px solid #b8dfbb; color: #285d31; font-size: 11px; font-weight: 600; }
 .weekly-total:last-child { border-right: 0; }
 .weekly-total strong { color: #194b23; font-size: 13px; white-space: nowrap; }
-.weekly-attendance-table { min-width: 930px; }
-.weekly-attendance-table th { background: #efedf0; color: #4a4650; }
-.weekly-attendance-table td { padding-top: 9px; padding-bottom: 9px; }
+.content.attendance-report-content { max-width: none; padding-right: 24px; padding-left: 24px; }
+.weekly-attendance-table { width: 100%; min-width: 0; table-layout: fixed; }
+.weekly-attendance-table th {
+  width: 5.846%; padding: 9px 5px; color: #4a4650; background: #efedf0;
+  text-align: center; white-space: normal; overflow-wrap: anywhere; line-height: 1.15;
+}
+.weekly-attendance-table th:first-child { width: 14%; }
+.weekly-attendance-table th:last-child { width: 10%; }
+.weekly-attendance-table th:first-child, .weekly-attendance-table td:first-child { text-align: left; }
+.weekly-attendance-table td { padding: 9px 5px; text-align: center; overflow-wrap: anywhere; }
+.weekly-attendance-table .attendance-flag { white-space: normal; }
 .variance-negative { color: #a5473d; }
 .variance-positive { color: #286744; }
 .attendance-flag { color: #286744; font-size: 10px; font-weight: 600; white-space: nowrap; }
@@ -228,6 +236,134 @@ td strong { color: #3d3657; font-weight: 600; }
 .toast { padding: 11px 15px; border-radius: 7px; color: #fff; background: #3b315d; box-shadow: 0 5px 18px rgba(35,27,60,.2); font-size: 12px; animation: toast-in .18s ease-out; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+@page {
+  size: A4 landscape;
+  margin: 0;
+}
+
+@media print {
+  body.printing-attendance-report {
+    width: 297mm;
+    height: 210mm;
+    overflow: hidden;
+    background: #fff;
+  }
+  body.printing-attendance-report .sidebar,
+  body.printing-attendance-report .topbar,
+  body.printing-attendance-report .page-heading .button-row,
+  body.printing-attendance-report .toast-region,
+  body.printing-attendance-report .modal-root {
+    display: none !important;
+  }
+  body.printing-attendance-report .app-shell {
+    display: block;
+    width: 297mm;
+    min-height: 0;
+    height: 210mm;
+    overflow: hidden;
+  }
+  body.printing-attendance-report .main-area {
+    width: 297mm;
+    min-height: 0;
+    height: 210mm;
+    background: #fff;
+  }
+  body.printing-attendance-report .content {
+    width: 297mm;
+    max-width: none;
+    margin: 0;
+    padding: 3mm;
+  }
+  body.printing-attendance-report .page-heading {
+    margin-bottom: 4px;
+  }
+  body.printing-attendance-report .page-heading h1 {
+    margin-bottom: 2px;
+    font-size: 15px;
+  }
+  body.printing-attendance-report .page-heading p,
+  body.printing-attendance-report .eyebrow {
+    font-size: 7px;
+  }
+  body.printing-attendance-report .eyebrow {
+    margin-bottom: 2px;
+  }
+  body.printing-attendance-report .weekly-period {
+    margin-bottom: 4px;
+  }
+  body.printing-attendance-report .weekly-period-summary {
+    gap: 12px;
+    padding: 4px 6px;
+  }
+  body.printing-attendance-report .weekly-period-summary span,
+  body.printing-attendance-report .workday-date span,
+  body.printing-attendance-report .table-card-header p {
+    font-size: 7px;
+  }
+  body.printing-attendance-report .weekly-period-summary strong,
+  body.printing-attendance-report .workday-date strong {
+    font-size: 8px;
+  }
+  body.printing-attendance-report .workday-date {
+    padding: 4px 6px;
+  }
+  body.printing-attendance-report .weekly-totals {
+    margin-bottom: 4px;
+  }
+  body.printing-attendance-report .weekly-total {
+    padding: 4px 6px;
+    font-size: 7px;
+  }
+  body.printing-attendance-report .weekly-total strong {
+    font-size: 8px;
+  }
+  body.printing-attendance-report .section-spacer,
+  body.printing-attendance-report .daily-attendance-list {
+    margin-top: 4px;
+  }
+  body.printing-attendance-report .daily-attendance-list {
+    gap: 3px;
+  }
+  body.printing-attendance-report .table-card,
+  body.printing-attendance-report .panel {
+    border-radius: 0;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+  body.printing-attendance-report .table-card-header {
+    padding: 4px 6px;
+  }
+  body.printing-attendance-report h2 {
+    font-size: 9px;
+  }
+  body.printing-attendance-report .table-wrap {
+    overflow: visible;
+  }
+  body.printing-attendance-report .weekly-attendance-table,
+  body.printing-attendance-report .daily-attendance-card table {
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+  }
+  body.printing-attendance-report th,
+  body.printing-attendance-report td {
+    padding: 2px 3px;
+    font-size: 6px;
+    line-height: 1.05;
+  }
+  body.printing-attendance-report th {
+    white-space: normal;
+  }
+  body.printing-attendance-report .attendance-flag {
+    font-size: 6px;
+  }
+  body.printing-attendance-report,
+  body.printing-attendance-report * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
 
 @media (max-width: 1050px) {
   .sidebar { width: 214px; flex-basis: 214px; }

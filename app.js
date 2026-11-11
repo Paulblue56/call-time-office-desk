@@ -734,6 +734,7 @@
   function render() {
     document.querySelector("#current-section").textContent = sectionTitles[state.view];
     document.querySelector("#today-label").textContent = formatDate(today, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    content.classList.toggle("attendance-report-content", state.view === "attendance-report");
     document.querySelectorAll("[data-nav]").forEach((button) => {
       button.classList.toggle("active", button.dataset.nav === state.view);
       if (button.dataset.nav) button.setAttribute("aria-current", button.dataset.nav === state.view ? "page" : "false");
@@ -1047,7 +1048,7 @@
     const variance = hours - targetHours;
     const coverage = targetHours ? Math.round(hours / targetHours * 1000) / 10 : 0;
     return `
-      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday attendance totals, work hours, approved leave, sick leave, and public holidays.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" data-action="export-attendance-csv">Export attendance CSV</button></div>`)}
+      ${pageHeading("STAFF ACTIVITY", "Weekly attendance", "Monday–Friday attendance totals, work hours, approved leave, sick leave, and public holidays.", `<div class="button-row">${reportDateControl()}<button class="btn btn-secondary btn-small" type="button" title="Choose Save as PDF in the print dialog" data-action="download-attendance-report">Download attendance report</button></div>`)}
       <section class="panel weekly-period">
         <div class="weekly-period-summary">
           <div><span>Week Start</span><strong>${formatDate(state.reportStart)}</strong></div>
@@ -1170,12 +1171,12 @@
 <th>Leave Days</th>
 <th>Sick Days</th>
 <th>Public Holidays</th>
-<th>Public Holiday Hours</th>
 <th>Client Days</th>
 <th>Office Days</th>
 <th>Hours Worked</th>
 <th>Leave Hours</th>
 <th>Sick Hours</th>
+<th>Public Holiday Hours</th>
 <th>Total Hours</th>
 <th>Target Hours</th>
 <th>Variance Hours</th>
@@ -1187,13 +1188,13 @@
 <td>${row.leaveDays}</td>
 <td>${row.sickDays}</td>
 <td>${row.publicHolidayDays}</td>
-<td>${formatHours(row.publicHolidayHours)}</td>
 <td>${row.clientDays}</td>
 <td>${row.officeDays}</td>
 
 <td>${formatHours(row.hoursWorked)}</td>
 <td>${formatHours(row.leaveHours)}</td>
 <td>${formatHours(row.sickHours)}</td>
+<td>${formatHours(row.publicHolidayHours)}</td>
 
 <td><strong>${formatHours(row.totalHours)}</strong></td>
 
@@ -1649,22 +1650,32 @@
     toast("Weekly calls CSV downloaded.");
   }
 
-  function exportAttendanceCsv() {
-    const rows = [["Date", "Staff", "Status", "Work Mode", "Time In", "Time Out", "Hours Worked", "Expected Hours", "Client / Location", "Notes"]];
-    currentWeekAttendance().forEach((entry) => rows.push([
-      entry.date,
-      entry.staff,
-      entry.status,
-      entry.workMode,
-      entry.timeIn,
-      entry.timeOut,
-      weeklyWorkedHours(entry),
-      entry.expectedHours,
-      entry.location,
-      entry.notes
-    ]));
-    download(`call-time-attendance-week-${state.reportStart}.csv`, "text/csv;charset=utf-8", rows.map((row) => row.map(csvCell).join(",")).join("\r\n"));
-    toast("Weekly attendance CSV downloaded.");
+  function downloadAttendanceReport() {
+    const report = document.querySelector("#content");
+    const originalTitle = document.title;
+    const cleanup = () => {
+      document.body.classList.remove("printing-attendance-report");
+      report.style.zoom = "";
+      document.title = originalTitle;
+    };
+    const fitReportToPage = () => {
+      const pageWidth = 297 * 96 / 25.4;
+      const pageHeight = 210 * 96 / 25.4;
+      const availableWidth = pageWidth - 8;
+      const availableHeight = pageHeight - 8;
+      const scale = Math.min(
+        1,
+        availableWidth / report.scrollWidth,
+        availableHeight / report.scrollHeight
+      );
+      report.style.zoom = String(scale);
+    };
+
+    document.body.classList.add("printing-attendance-report");
+    document.title = `Call-Time-Attendance-${state.reportStart}`;
+    window.addEventListener("beforeprint", fitReportToPage, { once: true });
+    window.addEventListener("afterprint", cleanup, { once: true });
+    window.print();
   }
 
   function unfoldIcalLines(text) {
@@ -2041,7 +2052,7 @@
     }
     else if (name === "cloud-signout") signOutCloud();
     else if (name === "export-csv") exportCallsCsv();
-    else if (name === "export-attendance-csv") exportAttendanceCsv();
+    else if (name === "download-attendance-report") downloadAttendanceReport();
   });
 
   document.addEventListener("submit", handleFormSubmit);
