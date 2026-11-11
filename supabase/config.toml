@@ -1,0 +1,2 @@
+[functions.gemini-assistant]
+verify_jwt = true

@@ -21,6 +21,20 @@ The public website code does not contain customer data or Supabase secrets.
 
 The cloud integration uses Supabase Auth and its REST API directly; no server credential is embedded in the website. Cloud sync requires the SQL setup and account above. If the free project pauses, resume it in Supabase before syncing.
 
+## Gemini assistant setup
+
+The Assistant tab uses Gemini to understand natural-language questions and supported tasks. The browser sends the submitted message and current date to a Supabase Edge Function; the function sends those values and a constrained instruction to Google Gemini for classification. Call & Time records stay in the app and are searched or summarized locally, and are not sent to Gemini. Gemini requests are stateless. New and edited records open as drafts for review and must be saved manually; deleting a record requires an additional confirmation. Press Enter to submit or Shift+Enter for a new line. Cloud sign-in is required.
+
+To enable Gemini:
+
+1. Create a Gemini API key in Google AI Studio. Do not put the key in this repository, the website, or a chat message.
+2. In the Supabase project dashboard, add the key as an Edge Function secret named `GEMINI_API_KEY`. Optionally set `GEMINI_MODEL`; the default is `gemini-3.8-flash`.
+3. Install and authenticate the Supabase CLI, then link this folder to the same Supabase project used for cloud sync: `supabase link --project-ref YOUR_PROJECT_REF`.
+4. Deploy the function: `supabase functions deploy gemini-assistant`.
+5. Publish the static website files using the GitHub Pages workflow. The assistant will report a configuration or sign-in error if the function or secret is missing.
+
+The function validates the signed-in Supabase user, keeps the Gemini key server-side, limits prompts to 2,000 characters, and accepts only constrained JSON actions. It never allows Gemini to write records directly.
+
 ## Weekly reports
 
 Weekly calls and weekly attendance have separate tabs. Both reports use Monday through Friday. Weekly calls includes incoming/outgoing totals by day, outcome and completion metrics, a busiest-day summary, and the week's call register. Completion rate counts successful call outcomes and failed attempts marked **Callback Completed**; the failed attempt remains a failed outcome and is not included in the succeeded-call count. When a later successful call matches an open callback by client and staff, the earlier call is saved as **Callback Completed** and is removed from the open follow-up queue; this applies across week boundaries. Weekly attendance shows the 40-hour target and staff variance and includes the daily attendance list for each workday. Present staff working remotely, going directly to a client, or working in the office and then going to a client count as 8 hours. Present office-only attendance uses recorded start/end times minus the one-hour lunch break for daily and weekly totals, target variance, and the landscape A3 PDF attendance report, which can span pages to keep rows readable, has a 1 cm top page margin, and places the enlarged Grant Thornton logo on the left with the report heading centered in the first-page header. If office clock-in/out times are missing, only manually recorded hours are counted. Manager-approved leave, sick leave, and public holidays count as 8 hours; the weekly staff summary reports remote days in a separate column immediately after public holidays, with leave, sick leave, and public holidays shown separately from days physically present. The daily register and daily report show a dash for the work mode on leave, sick leave, and public holiday entries. For office-only shifts, 07:00–16:00, 08:00–17:00, or 09:00–18:00 therefore represents 8 work hours.
