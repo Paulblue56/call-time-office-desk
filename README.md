@@ -23,7 +23,7 @@ The cloud integration uses Supabase Auth and its REST API directly; no server cr
 
 ## Gemini assistant setup
 
-The Assistant tab uses Gemini to understand natural-language questions and supported tasks. The browser sends the submitted message and current date to a Supabase Edge Function; the function sends those values and a constrained instruction to Google Gemini for classification. Call & Time records stay in the app and are searched or summarized locally, and are not sent to Gemini. Gemini requests are stateless. New and edited records open as drafts for review and must be saved manually; deleting a record requires an additional confirmation. Press Enter to submit or Shift+Enter for a new line. Cloud sign-in is required.
+The Assistant tab is integrated with Call & Time. Read-only lookups, simple navigation, reports, and staff/client name matching run locally against the records saved in the app. A unique name such as “Agnes” resolves to the matching staff or client record; if several records match, the assistant lists them for selection. Complex requests are sent as text to a Supabase Edge Function and classified by Gemini; stored records are never sent to Gemini. New or edited records open as drafts and are saved only when you review and choose Save. Deletions require confirmation. Press Enter to submit or Shift+Enter for a new line. Cloud sign-in is required for requests that need Gemini.
 
 To enable Gemini:
 
