@@ -764,14 +764,14 @@
   function renderAssistant() {
     const welcome = {
       role: "assistant",
-      text: "Ask in your own words, for example “Agnes,” “find calls for Acme,” “who worked remotely this week,” “what day is it?” or “add attendance for Alice tomorrow.” Specific record lookups and app commands use records in this app. General questions and complex requests go to Google Gemini; saved records are not sent. New and edited records open for review before you save; deletions require confirmation.",
+      text: "Ask in your own words, for example “Agnes,” “find calls for Acme,” “who worked remotely this week,” “what day is it?” “Agnes is sick today,” or “add attendance for Alice tomorrow.” Specific record lookups use records in this app. General questions and complex requests go to Google Gemini; saved records are not sent. A clear sick-attendance statement is saved immediately for one matched staff member. Other new and edited records open for review; deletions require confirmation.",
       actions: []
     };
     const messages = state.assistantMessages.length ? state.assistantMessages : [welcome];
     return `
       ${pageHeading("CALL & TIME APP ASSISTANT", "Assistant", "Ask about people, clients, calls, attendance, meetings, or app tasks.")}
       <section class="assistant-shell" aria-label="Call and Time assistant">
-        <div class="assistant-status"><span class="assistant-status-dot"></span><span><strong>Call &amp; Time assistant</strong><small>Specific record lookups use records in this app. General questions and complex requests go to Google Gemini; saved records stay here.</small></span></div>
+        <div class="assistant-status"><span class="assistant-status-dot"></span><span><strong>Call &amp; Time assistant</strong><small>Specific record lookups use records in this app. General questions and complex requests go to Google Gemini; sick-attendance statements save for a unique staff match.</small></span></div>
         <div class="assistant-thread" id="assistant-thread" role="log" aria-live="polite" aria-relevant="additions">
           ${messages.map(renderAssistantMessage).join("")}
         </div>
@@ -801,7 +801,7 @@
         return `<button class="btn btn-secondary btn-small" type="button" data-action="assistant-edit-record" data-kind="${escapeHtml(action.kind)}" data-id="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`;
       }
       if (action.type === "assistant-person-choice") {
-        return `<button class="btn btn-secondary btn-small" type="button" data-action="assistant-person-choice" data-kind="${escapeHtml(action.kind)}" data-id="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`;
+        return `<button class="btn btn-secondary btn-small" type="button" data-action="assistant-person-choice" data-kind="${escapeHtml(action.kind)}" data-id="${escapeHtml(action.id)}" data-query="${escapeHtml(action.query || "")}">${escapeHtml(action.label)}</button>`;
       }
       if (action.type === "delete-record") {
         return `<button class="btn btn-danger btn-small" type="button" data-action="assistant-delete-record" data-kind="${escapeHtml(action.kind)}" data-id="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`;
@@ -896,13 +896,17 @@
   }
 
   function assistantPersonMatches(query) {
+    const lower = query.toLowerCase();
+    const preferredKind = /\b(attendance|colleague|employee|ill|remote(?:ly)?|sick|staff|unwell|work(?:ed|ing)?)\b/.test(lower)
+      ? "staff"
+      : /\b(client|clients|companies|company|customer)\b/.test(lower) ? "client" : "";
     const contextWords = new Set([
-      "about", "all", "are", "attendance", "call", "calls", "client", "clients", "colleague", "colleagues",
+      "about", "add", "all", "am", "are", "as", "attendance", "call", "calls", "client", "clients", "colleague", "colleagues",
       "company", "companies", "contact", "contacts", "current", "data", "details", "did", "do", "does",
-      "employee", "employees", "find", "for", "from", "had", "have", "help", "history", "how", "information",
-      "is", "last", "list", "look", "me", "meeting", "meetings", "monday", "name", "next", "of", "on", "open", "people",
+      "employee", "employees", "feel", "feeling", "feels", "find", "for", "from", "had", "have", "help", "history", "how", "ill", "information",
+      "is", "last", "list", "log", "look", "mark", "me", "meeting", "meetings", "monday", "name", "next", "of", "on", "open", "people",
       "person", "please", "record", "records", "remote", "remotely", "report", "search", "show", "staff", "tell",
-      "this", "today", "tuesday", "upcoming", "wednesday", "thursday", "friday", "saturday", "sunday", "week",
+      "set", "sick", "this", "today", "tuesday", "unwell", "upcoming", "wednesday", "thursday", "friday", "saturday", "sunday", "week",
       "where", "who", "with", "work", "worked", "working", "would", "you"
     ]);
     const queryTokens = assistantTokens(query).filter((token) => !contextWords.has(token));
@@ -912,11 +916,23 @@
       ...state.data.staff.map((record) => ({ kind: "staff", record })),
       ...state.data.clients.map((record) => ({ kind: "client", record }))
     ];
-    return people.filter(({ record }) => {
+    return people.filter(({ kind, record }) => {
+      if (preferredKind && kind !== preferredKind) return false;
       const nameTokens = assistantTokens(record.name || "");
       return queryTokens.every((queryToken) => nameTokens.some((nameToken) =>
         nameToken === queryToken || (queryToken.length >= 3 && nameToken.startsWith(queryToken))));
     }).sort((a, b) => String(a.record.name || "").localeCompare(String(b.record.name || "")) || a.kind.localeCompare(b.kind));
+  }
+
+  function assistantSickAttendanceIntent(query) {
+    const lower = query.toLowerCase().trim();
+    if (!/\b(sick|ill|unwell)\b/.test(lower)) return false;
+    if (/\?\s*$/.test(query)) return false;
+    if (/\bnot\s+(?:feeling\s+)?(?:sick|ill|unwell)\b|\b(?:is|are|was|were|has|have)\s+(?:not|never)\s+(?:feeling\s+)?(?:sick|ill|unwell)\b|\b(?:isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent)\s+(?:feeling\s+)?(?:sick|ill|unwell)\b/.test(lower)) return false;
+    if (/\b(show|find|search|list|history|check|status)\b/.test(lower)) return false;
+    if (/^\s*(who|what|when|where|why|should|would|could|is|are|was|were|does|did|has|have)\b/.test(lower)) return false;
+    if (/\b(mark|record|set|add|log)\b/.test(lower)) return !/\b(should|would|could)\b/.test(lower);
+    return /\b(?:is|are|am|feel|feels|feeling)\s+(?:feeling\s+)?(?:sick|ill|unwell)\b/.test(lower);
   }
 
   function assistantPersonChoiceLabel(person) {
@@ -971,6 +987,7 @@
 
   function assistantCanHandleLocally(query) {
     const lower = query.toLowerCase();
+    if (/\b(sick|ill|unwell)\b/.test(lower)) return assistantSickAttendanceIntent(query);
     if (/\b(add|complete|create|enter|fill|log|record|schedule|make|edit|update|change|delete|remove)\b/.test(lower)) {
       return false;
     }
@@ -1034,16 +1051,48 @@
     return [weekStart, addDays(weekStart, 4)];
   }
 
-  function assistantAnswer(query) {
+  function assistantSickAttendanceDate(query) {
+    const lower = query.toLowerCase();
+    if (/\byesterday\b/.test(lower)) return addDays(today, -1);
+    if (/\btomorrow\b/.test(lower)) return addDays(today, 1);
+    if (/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/.test(lower)) return assistantDateRange(query)[0];
+    return today;
+  }
+
+  function assistantAnswer(query, selectedPerson = null) {
     const text = query.trim();
     const lower = text.toLowerCase();
     const type = assistantTypeFromText(text);
     const answer = (message, actions = [], execute = null) => ({ text: message, actions, execute });
     const createIntent = /\b(add|complete|create|enter|fill|log|record|schedule|make)\b/.test(lower) || /\bnew\s+(call|attendance|meeting|appointment|client|staff)\b/.test(lower);
-    const personMatches = assistantPersonMatches(text);
+    const personMatches = selectedPerson ? [selectedPerson] : assistantPersonMatches(text);
 
     if (/^(help|what can you do|how do i use you)\??$/.test(lower.trim())) {
-      return answer("Type a command and press Enter. Examples: “find calls for Acme,” “open attendance,” “add attendance,” “edit call for Acme,” “delete client Acme,” or “summarize attendance this week.” I run supported app commands directly; new and edited records open for your review, and deletions require confirmation.");
+      return answer("Type a command and press Enter. Examples: “find calls for Acme,” “open attendance,” “Agnes is sick today,” “edit call for Acme,” or “summarize attendance this week.” Clear sick-attendance commands save immediately for a unique staff match; other new or edited records open for your review, and deletions require confirmation.");
+    }
+
+    if (assistantSickAttendanceIntent(text)) {
+      const staffMatches = personMatches.filter((person) => person.kind === "staff");
+      if (staffMatches.length > 1) {
+        const labels = staffMatches.map(assistantPersonChoiceLabel);
+        const labelCounts = new Map(labels.map((label) => [label, labels.filter((item) => item === label).length]));
+        return answer("I found multiple staff members with that name. Choose the correct person before I update attendance:",
+          staffMatches.map((person, index) => ({
+            type: "assistant-person-choice",
+            kind: person.kind,
+            id: person.record.id,
+            query: text,
+            label: `${labels[index]}${labelCounts.get(labels[index]) > 1 ? ` · record ${index + 1}` : ""}`
+          })));
+      }
+      if (!staffMatches.length) {
+        return answer("I couldn't match that name to a staff record, so I didn't change attendance. Try the staff member's full name.");
+      }
+      return answer("", [{ type: "navigate", view: "attendance", label: "Open attendance" }], {
+        type: "mark-sick-attendance",
+        staffId: staffMatches[0].record.id,
+        date: assistantSickAttendanceDate(text)
+      });
     }
 
     if (createIntent && type) {
@@ -1088,6 +1137,7 @@
           type: "assistant-person-choice",
           kind: person.kind,
           id: person.record.id,
+          query: text,
           label: `${labels[index]}${labelCounts.get(labels[index]) > 1 ? ` · record ${index + 1}` : ""}`
         })));
     }
@@ -1124,6 +1174,11 @@
             : remote;
       const byStaff = [...new Set(selectedRemote.map((entry) => entry.staff).filter(Boolean))].sort((a, b) => a.localeCompare(b));
       const period = rangeStart === rangeEnd ? formatDate(rangeStart) : `${formatDate(rangeStart)}–${formatDate(rangeEnd)}`;
+      if (personMatches.length === 1 && personMatches[0].kind === "staff") {
+        const name = personMatches[0].record.name || "This staff member";
+        const status = selectedRemote.length ? "is recorded as working remotely" : "is not recorded as working remotely";
+        return answer(`${name} ${status} on ${period}.`, [{ type: "navigate", view: "attendance", label: "Open attendance" }]);
+      }
       const names = byStaff.length ? byStaff.join(", ") : "No remote attendance entries found";
       return answer(`Remote staff for ${period}: ${names}.`, [{ type: "navigate", view: "attendance", label: "Open attendance" }]);
     }
@@ -1268,8 +1323,65 @@
     return result;
   }
 
+  function markStaffSickAttendance({ staffId, date }) {
+    if (storageFault) {
+      return { text: "I couldn't change attendance because saved data needs to be restored first.", actions: [] };
+    }
+    const staff = state.data.staff.find((record) => record.id === staffId);
+    if (!staff || !String(staff.name || "").trim()) {
+      return { text: "I couldn't find that staff record, so I didn't change attendance.", actions: [] };
+    }
+    const staffName = String(staff.name).trim();
+    const normalizedName = staffName.toLocaleLowerCase();
+    const existing = state.data.attendance.filter((entry) =>
+      entry.date === date && String(entry.staff || "").trim().toLocaleLowerCase() === normalizedName);
+    const openAttendance = [{ type: "navigate", view: "attendance", label: "Open attendance" }];
+    if (existing.length > 1) {
+      return { text: `There are multiple attendance entries for ${staffName} on ${formatDate(date)}. I left them unchanged; review them in Attendance first.`, actions: openAttendance };
+    }
+    if (existing.length === 1 && attendanceDayKind(existing[0]) === "sick") {
+      state.attendanceDay = date;
+      return { text: `${staffName} is already marked as sick for ${formatDate(date)}.`, actions: openAttendance };
+    }
+
+    const previousAttendance = state.data.attendance;
+    const existingEntry = existing[0];
+    const sickEntry = {
+      ...(existingEntry || {}),
+      id: existingEntry?.id || id(),
+      staff: staffName,
+      date,
+      status: "Sick Leave",
+      workMode: "Office",
+      timeIn: "",
+      timeOut: "",
+      location: "",
+      expectedHours: 8
+    };
+    state.data.attendance = existingEntry
+      ? previousAttendance.map((entry) => entry === existingEntry ? sickEntry : entry)
+      : [...previousAttendance, sickEntry];
+    if (!saveData()) {
+      state.data.attendance = previousAttendance;
+      return { text: `I couldn't save sick leave for ${staffName}; attendance was not changed.`, actions: [] };
+    }
+    state.attendanceDay = date;
+    return { text: `Marked ${staffName} as Sick Leave for ${formatDate(date)}.`, actions: openAttendance };
+  }
+
+  function resolveLocalAssistantResponse(query, selectedPerson = null) {
+    const response = assistantAnswer(query, selectedPerson);
+    if (response.execute?.type === "mark-sick-attendance") {
+      const result = markStaffSickAttendance(response.execute);
+      response.text = result.text;
+      response.actions = result.actions;
+      response.execute = null;
+    }
+    return response;
+  }
+
   function runLocalAssistant(query) {
-    const response = assistantAnswer(query);
+    const response = resolveLocalAssistantResponse(query);
     state.assistantMessages.push({ role: "assistant", text: response.text, actions: response.actions });
     if (state.assistantMessages.length > 40) state.assistantMessages.splice(0, state.assistantMessages.length - 40);
     render();
@@ -1278,17 +1390,21 @@
     document.querySelector("#assistant-query")?.focus();
   }
 
-  function chooseAssistantPerson(kind, recordId) {
+  function chooseAssistantPerson(kind, recordId, query = "") {
     const collection = assistantCollection(kind);
     const record = collection && state.data[collection].find((item) => item.id === recordId);
     if (!record) {
       toast("That contact is no longer available. Try the name again.");
       return;
     }
-    const response = assistantPersonAnswer(record.name, { kind, record });
+    const person = { kind, record };
+    const response = query
+      ? resolveLocalAssistantResponse(query, person)
+      : assistantPersonAnswer(record.name, person);
     state.assistantMessages.push({ role: "assistant", text: response.text, actions: response.actions });
     if (state.assistantMessages.length > 40) state.assistantMessages.splice(0, state.assistantMessages.length - 40);
     render();
+    if (response.execute) executeAssistantAction(response.execute);
   }
 
   async function handleGeminiAction(result, prompt, responseIndex) {
@@ -2719,7 +2835,7 @@
     const { action: name, id: recordId, kind } = action.dataset;
     if (name === "assistant-suggestion") submitAssistantQuery(action.dataset.query || "");
     else if (name === "assistant-local-retry") runLocalAssistant(action.dataset.query || "");
-    else if (name === "assistant-person-choice") chooseAssistantPerson(kind, recordId);
+    else if (name === "assistant-person-choice") chooseAssistantPerson(kind, recordId, action.dataset.query || "");
     else if (name === "assistant-new-record") {
       if (storageFault) {
         toast("Changes are disabled until you restore a valid backup.");
