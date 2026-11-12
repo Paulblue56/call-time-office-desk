@@ -764,14 +764,14 @@
   function renderAssistant() {
     const welcome = {
       role: "assistant",
-      text: "Ask in your own words, for example “Agnes,” “find calls for Acme,” “who worked remotely this week,” or “add attendance for Alice tomorrow.” Simple lookups run against records in this app. Complex requests go to Google Gemini, but saved records are not sent. New and edited records open for review before you save; deletions require confirmation.",
+      text: "Ask in your own words, for example “Agnes,” “find calls for Acme,” “who worked remotely this week,” “what day is it?” or “add attendance for Alice tomorrow.” Specific record lookups and app commands use records in this app. General questions and complex requests go to Google Gemini; saved records are not sent. New and edited records open for review before you save; deletions require confirmation.",
       actions: []
     };
     const messages = state.assistantMessages.length ? state.assistantMessages : [welcome];
     return `
       ${pageHeading("CALL & TIME APP ASSISTANT", "Assistant", "Ask about people, clients, calls, attendance, meetings, or app tasks.")}
       <section class="assistant-shell" aria-label="Call and Time assistant">
-        <div class="assistant-status"><span class="assistant-status-dot"></span><span><strong>Call &amp; Time assistant</strong><small>Simple lookups use records in this app. Complex requests go to Google Gemini; saved records stay here.</small></span></div>
+        <div class="assistant-status"><span class="assistant-status-dot"></span><span><strong>Call &amp; Time assistant</strong><small>Specific record lookups use records in this app. General questions and complex requests go to Google Gemini; saved records stay here.</small></span></div>
         <div class="assistant-thread" id="assistant-thread" role="log" aria-live="polite" aria-relevant="additions">
           ${messages.map(renderAssistantMessage).join("")}
         </div>
@@ -985,7 +985,8 @@
 
     const readIntent = /\b(find|search|show|list|who|what|where|when|which|how many|tell me about)\b/.test(lower);
     const complexIntent = /\b(analy[sz]e|compare|recommend|suggest|advise|advice|explain|prioriti[sz]e|should|why)\b/.test(lower);
-    return readIntent && !complexIntent && assistantSearchTokens(query).length > 0;
+    const recordContext = assistantTypeFromText(query) || /\b(records?|directory)\b/.test(lower);
+    return readIntent && !complexIntent && recordContext && assistantSearchTokens(query).length > 0;
   }
 
   function assistantNavigateTarget(query) {
