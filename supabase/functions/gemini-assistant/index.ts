@@ -63,6 +63,29 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
 
+function interactionOutputText(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const interaction = value as Record<string, unknown>;
+  if (typeof interaction.output_text === "string") return interaction.output_text;
+  if (!Array.isArray(interaction.steps)) return null;
+
+  const textParts: string[] = [];
+  for (const step of interaction.steps) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const modelOutput = step as Record<string, unknown>;
+    if (modelOutput.type !== "model_output" || !Array.isArray(modelOutput.content)) continue;
+    for (const content of modelOutput.content) {
+      if (!content || typeof content !== "object" || Array.isArray(content)) continue;
+      const textContent = content as Record<string, unknown>;
+      if (textContent.type === "text" && typeof textContent.text === "string") {
+        textParts.push(textContent.text);
+      }
+    }
+  }
+  const outputText = textParts.join("");
+  return outputText || null;
+}
+
 function normalizeResponse(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Gemini returned an invalid response.");
@@ -194,14 +217,15 @@ Deno.serve(async (request) => {
       return jsonResponse({ error: "Gemini is temporarily unavailable. Please try again shortly." }, 502);
     }
 
-    const interaction = await geminiResponse.json();
-    if (typeof interaction.output_text !== "string") {
+    const interaction: unknown = await geminiResponse.json();
+    const outputText = interactionOutputText(interaction);
+    if (typeof outputText !== "string") {
       console.error("Gemini returned no structured assistant text.");
       return jsonResponse({ error: "Gemini returned an empty response. Please try again." }, 502);
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(interaction.output_text);
+      parsed = JSON.parse(outputText);
     } catch {
       console.error("Gemini returned malformed structured assistant text.");
       return jsonResponse({ error: "Gemini returned an unreadable response. Please try again." }, 502);
